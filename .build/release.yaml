@@ -1,0 +1,66 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "OllamaStatus-arm64-apple-macosx26.0-release.exe": ["<OllamaStatus-arm64-apple-macosx26.0-release.exe>"]
+  "OllamaStatus-arm64-apple-macosx26.0-release.module": ["<OllamaStatus-arm64-apple-macosx26.0-release.module>"]
+  "PackageStructure": ["<PackageStructure>"]
+  "main": ["<OllamaStatus-arm64-apple-macosx26.0-release.exe>","<OllamaStatus-arm64-apple-macosx26.0-release.module>"]
+  "test": ["<OllamaStatus-arm64-apple-macosx26.0-release.exe>","<OllamaStatus-arm64-apple-macosx26.0-release.module>"]
+default: "main"
+nodes:
+  "/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+commands:
+  "/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/AppDelegate.swift","/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/OllamaMonitor.swift","/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/StatusIndicator.swift"]
+    outputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/sources"]
+    description: "Write auxiliary file /Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/sources"
+
+  "/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/AppDelegate.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/OllamaMonitor.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/StatusIndicator.swift.o"]
+    outputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.product/Objects.LinkFileList"
+
+  "/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Library/Developer/CommandLineTools/usr/bin/swiftc"]
+    outputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt"
+
+  "<OllamaStatus-arm64-apple-macosx26.0-release.exe>":
+    tool: phony
+    inputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus"]
+    outputs: ["<OllamaStatus-arm64-apple-macosx26.0-release.exe>"]
+
+  "<OllamaStatus-arm64-apple-macosx26.0-release.module>":
+    tool: phony
+    inputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/AppDelegate.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/OllamaMonitor.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/StatusIndicator.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/Modules/OllamaStatus.swiftmodule"]
+    outputs: ["<OllamaStatus-arm64-apple-macosx26.0-release.module>"]
+
+  "C.OllamaStatus-arm64-apple-macosx26.0-release.exe":
+    tool: shell
+    inputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/AppDelegate.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/OllamaMonitor.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/StatusIndicator.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.product/Objects.LinkFileList"]
+    outputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus"]
+    description: "Linking ./.build/arm64-apple-macosx/release/OllamaStatus"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-L","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release","-o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus","-module-name","OllamaStatus","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-dead_strip","-Xlinker","-alias","-Xlinker","_OllamaStatus_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Library/Developer/CommandLineTools/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g"]
+
+  "C.OllamaStatus-arm64-apple-macosx26.0-release.module":
+    tool: shell
+    inputs: ["/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/AppDelegate.swift","/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/OllamaMonitor.swift","/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/StatusIndicator.swift","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/swift-version--1AB21518FC5DEDBE.txt","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/sources"]
+    outputs: ["/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/AppDelegate.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/OllamaMonitor.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/StatusIndicator.swift.o","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/Modules/OllamaStatus.swiftmodule"]
+    description: "Compiling Swift Module 'OllamaStatus' (3 sources)"
+    args: ["/Library/Developer/CommandLineTools/usr/bin/swiftc","-module-name","OllamaStatus","-emit-dependencies","-emit-module","-emit-module-path","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/Modules/OllamaStatus.swiftmodule","-output-file-map","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/output-file-map.json","-whole-module-optimization","-num-threads","10","-c","@/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/OllamaStatus.build/sources","-I","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-O","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/lucasmullikin/projects/OllamaStatus/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","OllamaStatus_main","-swift-version","5","-parse-as-library","-I","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-L","/Library/Developer/CommandLineTools/Library/Developer/Frameworks","-plugin-path","/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing","-sdk","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-g","-Xcc","-isysroot","-Xcc","/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk","-Xcc","-fPIC","-Xcc","-g","-package-name","ollamastatus"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/lucasmullikin/projects/OllamaStatus/OllamaStatus/","/Users/lucasmullikin/projects/OllamaStatus/Package.swift","/Users/lucasmullikin/projects/OllamaStatus/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+
