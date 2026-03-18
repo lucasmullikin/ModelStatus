@@ -49,29 +49,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         // Title
-        let titleItem = NSMenuItem(title: "Ollama Status", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         titleItem.attributedTitle = NSAttributedString(
             string: "Ollama Status",
-            attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]
+            attributes: [.font: NSFont.boldSystemFont(ofSize: 14), .foregroundColor: NSColor.white]
         )
         menu.addItem(titleItem)
 
         menu.addItem(NSMenuItem.separator())
 
         // Instance statuses
-        let showURLs = ConfigManager.shared.showURLs
         if currentStatuses.isEmpty {
             let instances = ConfigManager.shared.instances
             for instance in instances {
                 let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-                item.attributedTitle = styledStatusLine(icon: "?", color: .systemGray, name: instance.name, status: "Checking...", modelName: nil, lastActive: nil, url: showURLs ? instance.url : nil)
+                item.attributedTitle = styledStatusLine(icon: "?", color: .systemGray, name: instance.name, status: "Checking...", modelName: nil, cpuPercent: nil, memoryMB: nil, lastActive: nil, clientIP: nil)
                 menu.addItem(item)
             }
         } else {
             for status in currentStatuses {
                 let (icon, color, statusText) = menuInfo(for: status)
                 let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-                item.attributedTitle = styledStatusLine(icon: icon, color: color, name: status.instance.name, status: statusText, modelName: status.modelName, lastActive: status.lastActive, url: showURLs ? status.instance.url : nil)
+                item.attributedTitle = styledStatusLine(icon: icon, color: color, name: status.instance.name, status: statusText, modelName: status.modelName, cpuPercent: status.cpuPercent, memoryMB: status.memoryMB, lastActive: status.lastActive, clientIP: status.clientIP)
                 menu.addItem(item)
             }
         }
@@ -82,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let legendHeader = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         legendHeader.attributedTitle = NSAttributedString(
             string: "Legend:",
-            attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]
+            attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white]
         )
         menu.addItem(legendHeader)
 
@@ -91,12 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(styledLegendItem(icon: "✗", color: .systemRed, text: "Not running"))
 
         menu.addItem(NSMenuItem.separator())
-
-        // Show URLs toggle
-        let showURLsItem = NSMenuItem(title: "Show IP Addresses", action: #selector(toggleShowURLs), keyEquivalent: "")
-        showURLsItem.target = self
-        showURLsItem.state = ConfigManager.shared.showURLs ? .on : .off
-        menu.addItem(showURLsItem)
 
         // Settings
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
@@ -121,41 +114,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func styledStatusLine(icon: String, color: NSColor, name: String, status: String, modelName: String?, lastActive: Date?, url: String?) -> NSAttributedString {
+    private func styledStatusLine(icon: String, color: NSColor, name: String, status: String, modelName: String?, cpuPercent: Double?, memoryMB: Int?, lastActive: Date?, clientIP: String?) -> NSAttributedString {
         let result = NSMutableAttributedString()
 
         // Colored icon
         result.append(NSAttributedString(
             string: "\(icon) ",
-            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)]
+            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .bold)]
         ))
 
-        // Instance name (bold, full color)
+        // Instance name (bold white)
         result.append(NSAttributedString(
             string: name,
-            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.labelColor]
+            attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.white]
         ))
 
-        // Spacing + status (regular weight, full color)
+        // Status in the icon color for emphasis
         result.append(NSAttributedString(
-            string: "   \(status)",
-            attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+            string: "  \(status)",
+            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: color]
         ))
 
-        // Model name on new line if present
+        // Model name with CPU% and memory
         if let model = modelName {
             result.append(NSAttributedString(
-                string: "\n     📦 \(model)",
-                attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor]
+                string: "\n     📦 ",
+                attributes: [.font: NSFont.systemFont(ofSize: 13)]
+            ))
+            result.append(NSAttributedString(
+                string: model,
+                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white]
             ))
         }
 
-        // Last active time
-        if let lastActive = lastActive {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss"
-            let timeStr = formatter.string(from: lastActive)
+        // Resource usage line (CPU + Memory)
+        if cpuPercent != nil || memoryMB != nil {
+            var resourceParts: [String] = []
 
+            if let cpu = cpuPercent {
+                let cpuIcon = cpu > 50 ? "⚡" : "💤"
+                resourceParts.append(String(format: "\(cpuIcon) %.0f%%", cpu))
+            }
+
+            if let mem = memoryMB {
+                let memStr = mem >= 1024 ? String(format: "%.1fGB", Double(mem) / 1024.0) : "\(mem)MB"
+                resourceParts.append("💾 \(memStr)")
+            }
+
+            if !resourceParts.isEmpty {
+                let resourceLine = resourceParts.joined(separator: "  ")
+                let cpuColor: NSColor = (cpuPercent ?? 0) > 50 ? .systemOrange : .white
+                result.append(NSAttributedString(
+                    string: "\n     \(resourceLine)",
+                    attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: cpuColor]
+                ))
+            }
+        }
+
+        // Client info - who's calling this Ollama
+        if let client = clientIP {
+            result.append(NSAttributedString(
+                string: "\n     📡 ",
+                attributes: [.font: NSFont.systemFont(ofSize: 12)]
+            ))
+            result.append(NSAttributedString(
+                string: client,
+                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.systemCyan]
+            ))
+        }
+
+        // Last active time - just show elapsed
+        if let lastActive = lastActive {
             let elapsed = Date().timeIntervalSince(lastActive)
             let agoStr: String
             if elapsed < 60 {
@@ -167,18 +196,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             result.append(NSAttributedString(
-                string: "\n     🕐 Last: \(timeStr) (\(agoStr))",
-                attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+                string: "\n     🕐 ",
+                attributes: [.font: NSFont.systemFont(ofSize: 12)]
             ))
-        }
-
-        // URL on new line if enabled
-        if let url = url {
-            // Extract just host:port from URL
-            let displayURL = URL(string: url).map { "\($0.host ?? "")\($0.port.map { ":\($0)" } ?? "")" } ?? url
             result.append(NSAttributedString(
-                string: "\n     \(displayURL)",
-                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
+                string: agoStr,
+                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.white]
             ))
         }
 
@@ -191,20 +214,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let result = NSMutableAttributedString()
         result.append(NSAttributedString(
             string: "  \(icon) ",
-            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)]
+            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)]
         ))
         result.append(NSAttributedString(
             string: text,
-            attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+            attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.white]
         ))
 
         item.attributedTitle = result
         return item
-    }
-
-    @objc private func toggleShowURLs() {
-        ConfigManager.shared.showURLs.toggle()
-        rebuildMenu()
     }
 
     @objc private func openSettings() {

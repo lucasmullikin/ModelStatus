@@ -1,5 +1,8 @@
 import AppKit
 
+/// App version
+let appVersion = "1.0-beta"
+
 /// Settings window for managing Ollama instances
 final class SettingsWindowController: NSWindowController {
     private let tableView = NSTableView()
@@ -8,7 +11,7 @@ final class SettingsWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 450, height: 360),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -61,6 +64,28 @@ final class SettingsWindowController: NSWindowController {
         contentView.addSubview(addButton)
         contentView.addSubview(removeButton)
 
+        // About section
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(separator)
+
+        let aboutLabel = NSTextField(labelWithString: "OllamaStatus v\(appVersion)")
+        aboutLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        aboutLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(aboutLabel)
+
+        let authorLabel = NSTextField(labelWithString: "by Lucas Mullikin")
+        authorLabel.font = NSFont.systemFont(ofSize: 11)
+        authorLabel.textColor = .secondaryLabelColor
+        authorLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(authorLabel)
+
+        let websiteButton = NSButton(title: "lucasmullikin.com", target: self, action: #selector(openWebsite))
+        websiteButton.bezelStyle = .inline
+        websiteButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(websiteButton)
+
         // Layout
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
@@ -69,13 +94,32 @@ final class SettingsWindowController: NSWindowController {
             scrollView.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -12),
 
             addButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            addButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+            addButton.bottomAnchor.constraint(equalTo: separator.topAnchor, constant: -16),
             addButton.widthAnchor.constraint(equalToConstant: 80),
 
             removeButton.leadingAnchor.constraint(equalTo: addButton.trailingAnchor, constant: 8),
-            removeButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
-            removeButton.widthAnchor.constraint(equalToConstant: 80)
+            removeButton.bottomAnchor.constraint(equalTo: separator.topAnchor, constant: -16),
+            removeButton.widthAnchor.constraint(equalToConstant: 80),
+
+            separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            separator.bottomAnchor.constraint(equalTo: aboutLabel.topAnchor, constant: -12),
+
+            aboutLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            aboutLabel.bottomAnchor.constraint(equalTo: authorLabel.topAnchor, constant: -4),
+
+            authorLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            authorLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+
+            websiteButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            websiteButton.centerYAnchor.constraint(equalTo: authorLabel.centerYAnchor)
         ])
+    }
+
+    @objc private func openWebsite() {
+        if let url = URL(string: "https://lucasmullikin.com") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func loadInstances() {
