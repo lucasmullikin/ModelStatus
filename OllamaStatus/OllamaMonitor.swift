@@ -2,9 +2,9 @@ import Foundation
 
 /// Represents the status of an Ollama instance
 enum OllamaStatus: Equatable {
-    case idle
-    case active
-    case unreachable
+    case active       // model loaded in memory
+    case idle         // ollama running, no models loaded
+    case unreachable  // cannot connect
 }
 
 /// Status for a single instance
@@ -12,6 +12,7 @@ struct InstanceStatus: Equatable {
     let instance: OllamaInstance
     let status: OllamaStatus
     let modelName: String?
+    let lastActive: Date?  // When model was last used (prompt in/out)
 }
 
 /// Response structure for /api/ps endpoint
@@ -24,6 +25,8 @@ struct OllamaModel: Codable {
     let size: Int64?
     let digest: String?
     let details: OllamaModelDetails?
+    let expires_at: String?
+    let size_vram: Int64?
 }
 
 struct OllamaModelDetails: Codable {
@@ -37,6 +40,8 @@ struct OllamaModelDetails: Codable {
 actor OllamaMonitor {
     private var pollTask: Task<Void, Never>?
     private var currentStatuses: [UUID: InstanceStatus] = [:]
+    private var lastExpiresAt: [UUID: String] = [:]      // Track expires_at per instance
+    private var lastActiveTime: [UUID: Date] = [:]       // When expires_at last changed
 
     typealias StatusCallback = @Sendable ([InstanceStatus]) -> Void
     private var onStatusChange: StatusCallback?
@@ -53,6 +58,8 @@ actor OllamaMonitor {
 
     func startPolling(onStatusChange: @escaping StatusCallback) {
         self.onStatusChange = onStatusChange
+        lastExpiresAt = [:]
+        lastActiveTime = [:]
 
         pollTask = Task { [weak self] in
             guard let self = self else { return }
@@ -105,7 +112,7 @@ actor OllamaMonitor {
     private func checkStatus(for instance: OllamaInstance) async -> InstanceStatus {
         guard let baseURL = URL(string: instance.url),
               let url = URL(string: "/api/ps", relativeTo: baseURL) else {
-            return InstanceStatus(instance: instance, status: .unreachable, modelName: nil)
+            return InstanceStatus(instance: instance, status: .unreachable, modelName: nil, lastActive: nil)
         }
 
         do {
@@ -113,19 +120,33 @@ actor OllamaMonitor {
 
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
-                return InstanceStatus(instance: instance, status: .unreachable, modelName: nil)
+                return InstanceStatus(instance: instance, status: .unreachable, modelName: nil, lastActive: nil)
             }
 
             let psResponse = try JSONDecoder().decode(OllamaPsResponse.self, from: data)
 
             if let models = psResponse.models, !models.isEmpty {
-                let modelName = models.first?.name
-                return InstanceStatus(instance: instance, status: .active, modelName: modelName)
+                let model = models.first
+                let modelName = model?.name
+                let currentExpires = model?.expires_at
+
+                // Track when expires_at changes (indicates prompt activity)
+                let previousExpires = lastExpiresAt[instance.id]
+                if let current = currentExpires {
+                    if previousExpires != current {
+                        // expires_at changed = model was just used
+                        lastActiveTime[instance.id] = Date()
+                    }
+                    lastExpiresAt[instance.id] = current
+                }
+
+                let lastActive = lastActiveTime[instance.id]
+                return InstanceStatus(instance: instance, status: .active, modelName: modelName, lastActive: lastActive)
             }
 
-            return InstanceStatus(instance: instance, status: .idle, modelName: nil)
+            return InstanceStatus(instance: instance, status: .idle, modelName: nil, lastActive: nil)
         } catch {
-            return InstanceStatus(instance: instance, status: .unreachable, modelName: nil)
+            return InstanceStatus(instance: instance, status: .unreachable, modelName: nil, lastActive: nil)
         }
     }
 }

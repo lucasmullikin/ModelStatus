@@ -64,14 +64,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let instances = ConfigManager.shared.instances
             for instance in instances {
                 let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-                item.attributedTitle = styledStatusLine(icon: "?", color: .systemGray, name: instance.name, status: "Checking...", url: showURLs ? instance.url : nil)
+                item.attributedTitle = styledStatusLine(icon: "?", color: .systemGray, name: instance.name, status: "Checking...", modelName: nil, lastActive: nil, url: showURLs ? instance.url : nil)
                 menu.addItem(item)
             }
         } else {
             for status in currentStatuses {
                 let (icon, color, statusText) = menuInfo(for: status)
                 let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-                item.attributedTitle = styledStatusLine(icon: icon, color: color, name: status.instance.name, status: statusText, url: showURLs ? status.instance.url : nil)
+                item.attributedTitle = styledStatusLine(icon: icon, color: color, name: status.instance.name, status: statusText, modelName: status.modelName, lastActive: status.lastActive, url: showURLs ? status.instance.url : nil)
                 menu.addItem(item)
             }
         }
@@ -113,9 +113,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func menuInfo(for status: InstanceStatus) -> (String, NSColor, String) {
         switch status.status {
         case .active:
-            if let model = status.modelName {
-                return ("●", .systemGreen, "Model loaded (\(model))")
-            }
             return ("●", .systemGreen, "Model loaded")
         case .idle:
             return ("○", .systemYellow, "Running (no models)")
@@ -124,26 +121,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func styledStatusLine(icon: String, color: NSColor, name: String, status: String, url: String?) -> NSAttributedString {
+    private func styledStatusLine(icon: String, color: NSColor, name: String, status: String, modelName: String?, lastActive: Date?, url: String?) -> NSAttributedString {
         let result = NSMutableAttributedString()
 
         // Colored icon
         result.append(NSAttributedString(
             string: "\(icon) ",
-            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)]
+            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)]
         ))
 
-        // Instance name (bold)
+        // Instance name (bold, full color)
         result.append(NSAttributedString(
             string: name,
-            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
+            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.labelColor]
         ))
 
-        // Spacing + status
+        // Spacing + status (regular weight, full color)
         result.append(NSAttributedString(
-            string: "      \(status)",
-            attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]
+            string: "   \(status)",
+            attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
         ))
+
+        // Model name on new line if present
+        if let model = modelName {
+            result.append(NSAttributedString(
+                string: "\n     📦 \(model)",
+                attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor]
+            ))
+        }
+
+        // Last active time
+        if let lastActive = lastActive {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss"
+            let timeStr = formatter.string(from: lastActive)
+
+            let elapsed = Date().timeIntervalSince(lastActive)
+            let agoStr: String
+            if elapsed < 60 {
+                agoStr = "\(Int(elapsed))s ago"
+            } else if elapsed < 3600 {
+                agoStr = "\(Int(elapsed / 60))m \(Int(elapsed.truncatingRemainder(dividingBy: 60)))s ago"
+            } else {
+                agoStr = "\(Int(elapsed / 3600))h ago"
+            }
+
+            result.append(NSAttributedString(
+                string: "\n     🕐 Last: \(timeStr) (\(agoStr))",
+                attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+            ))
+        }
 
         // URL on new line if enabled
         if let url = url {
@@ -151,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let displayURL = URL(string: url).map { "\($0.host ?? "")\($0.port.map { ":\($0)" } ?? "")" } ?? url
             result.append(NSAttributedString(
                 string: "\n     \(displayURL)",
-                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular), .foregroundColor: NSColor.tertiaryLabelColor]
+                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
             ))
         }
 
@@ -164,11 +191,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let result = NSMutableAttributedString()
         result.append(NSAttributedString(
             string: "  \(icon) ",
-            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)]
+            attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)]
         ))
         result.append(NSAttributedString(
             string: text,
-            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+            attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         ))
 
         item.attributedTitle = result
