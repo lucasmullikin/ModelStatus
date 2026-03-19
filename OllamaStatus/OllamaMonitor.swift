@@ -286,8 +286,12 @@ actor OllamaMonitor {
 
             // API returned empty but memory > 1GB means model is loaded (Ollama API bug workaround)
             if isLocal, let mem = memoryMB, mem > 1024 {
-                lastActiveTime[instance.id] = Date()
-                return InstanceStatus(instance: instance, status: .active, modelName: "model loaded", lastActive: Date(), cpuPercent: cpuPercent, memoryMB: memoryMB, clientIP: clientIP)
+                // Only update lastActive when CPU indicates active inference
+                if let cpu = cpuPercent, cpu > 20 {
+                    lastActiveTime[instance.id] = Date()
+                }
+                let lastActive = lastActiveTime[instance.id]
+                return InstanceStatus(instance: instance, status: .active, modelName: "model loaded", lastActive: lastActive, cpuPercent: cpuPercent, memoryMB: memoryMB, clientIP: clientIP)
             }
 
             return InstanceStatus(instance: instance, status: .idle, modelName: nil, lastActive: nil, cpuPercent: cpuPercent, memoryMB: memoryMB, clientIP: nil)
