@@ -17,11 +17,11 @@ struct VLLMProvider: Provider {
     }
 
     func check(_ instance: Instance, session: URLSession, isLocal: Bool, localCPU: Double?,
-               localMemMB: Int?, localClientIP: String?, lastActive: Date?) async -> ServerStatus {
+               localMemMB: Int?, localClientProcess: String?, lastActive: Date?) async -> ServerStatus {
         let offline = ServerStatus(instance: instance, detectedKind: .vllm, state: .unreachable,
                                    loadedModels: [], availableModelCount: 0, vramTotal: 0,
                                    lastActive: nil, cpuPercent: nil, memoryMB: nil,
-                                   clientIP: nil, latencyMs: nil)
+                                   clientProcess: nil, latencyMs: nil)
         guard let base = URL(string: instance.url),
               let modelsURL = URL(string: "/v1/models", relativeTo: base),
               let metricsURL = URL(string: "/metrics", relativeTo: base) else { return offline }
@@ -46,7 +46,7 @@ struct VLLMProvider: Provider {
                                 loadedModels: loaded, availableModelCount: models.count,
                                 vramTotal: vramTotal, lastActive: lastActive,
                                 cpuPercent: localCPU, memoryMB: localMemMB,
-                                clientIP: localClientIP, latencyMs: latency)
+                                clientProcess: localClientProcess, latencyMs: latency)
         } catch { return offline }
     }
 
@@ -59,14 +59,15 @@ struct VLLMProvider: Provider {
         } catch { return [] }
     }
 
-    /// Parse `vllm:gpu_memory_usage_bytes` (or similar) from Prometheus text exposition format.
+    /// Parse `vllm:gpu_memory_usage_bytes` specifically from Prometheus text exposition format.
+    /// Earlier versions summed every line containing both "vllm" and "memory", which double-
+    /// counted cache + allocator metrics. We match the canonical bytes gauge exactly.
     static func parseGPUMemoryBytes(prometheusText: String) -> Int64 {
         var total: Int64 = 0
         for line in prometheusText.split(separator: "\n") {
             if line.hasPrefix("#") { continue }
             let lower = line.lowercased()
-            guard lower.contains("vllm") && lower.contains("memory") else { continue }
-            // Last whitespace-separated token is the value
+            guard lower.contains("vllm:gpu_memory_usage_bytes") else { continue }
             if let valStr = line.split(whereSeparator: { $0.isWhitespace }).last,
                let val = Double(valStr) {
                 total += Int64(val)

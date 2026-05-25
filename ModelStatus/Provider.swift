@@ -20,7 +20,7 @@ struct ServerStatus: Equatable, Sendable {
     let lastActive: Date?
     let cpuPercent: Double?
     let memoryMB: Int?
-    let clientIP: String?
+    let clientProcess: String?       // Process name of who's hitting the local server (e.g. "python", "curl")
     let latencyMs: Int?
 
     var firstModel: String? { loadedModels.first?.name }
@@ -59,7 +59,7 @@ protocol Provider: Sendable {
 
     func probe(_ instance: Instance, session: URLSession) async -> Bool
     func check(_ instance: Instance, session: URLSession, isLocal: Bool, localCPU: Double?,
-               localMemMB: Int?, localClientIP: String?, lastActive: Date?) async -> ServerStatus
+               localMemMB: Int?, localClientProcess: String?, lastActive: Date?) async -> ServerStatus
     func ejectModel(_ name: String, on instance: Instance, session: URLSession) async
     func loadModel(_ name: String, on instance: Instance, session: URLSession) async
     func availableModels(_ instance: Instance, session: URLSession) async -> [String]
@@ -112,8 +112,14 @@ enum HTTPHelpers {
         let start = Date()
         let (data, resp) = try await session.data(for: req)
         let latency = Int(Date().timeIntervalSince(start) * 1000)
-        if data.count > maxResponseBytes { throw URLError(.dataLengthExceedsMaximum) }
         guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        // Pre-check Content-Length when present (cheaper than full download).
+        if let lenStr = http.value(forHTTPHeaderField: "Content-Length"),
+           let len = Int(lenStr), len > maxResponseBytes {
+            throw URLError(.dataLengthExceedsMaximum)
+        }
+        // Post-check actual byte count (some servers omit Content-Length).
+        if data.count > maxResponseBytes { throw URLError(.dataLengthExceedsMaximum) }
         return (data, http, latency)
     }
 
@@ -125,7 +131,8 @@ enum HTTPHelpers {
         if let h = Keychain.authHeader(for: instanceID), !h.isEmpty {
             req.setValue(h, forHTTPHeaderField: "Authorization")
         }
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        // Propagate JSON serialization failures rather than silently sending no body.
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = timeout
         let (_, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -137,7 +144,7 @@ enum HTTPHelpers {
 enum LocalProbe {
     static func isLocal(_ url: String) -> Bool {
         guard let h = URL(string: url)?.host else { return false }
-        return h == "127.0.0.1" || h == "localhost" || h == "0.0.0.0"
+        return h == "127.0.0.1" || h == "localhost" || h == "0.0.0.0" || h == "::1"
     }
 
     static func cpuFor(processKeyword: String) async -> Double? {
@@ -149,10 +156,15 @@ enum LocalProbe {
         return Int(kb / 1024)
     }
 
-    static func clientIP(port: Int, excludeKeywords: [String] = []) async -> String? {
+    /// Return the process name of whoever is currently talking to a local server on `port`.
+    /// Despite the surface meaning of "client", returning the IP would always be 127.0.0.1
+    /// for loopback connections — the process name (e.g. "python", "curl", "Claude") is the
+    /// useful identifier. Skips own-process lines (Ollama, ModelStatus).
+    static func clientProcess(port: Int, excludeKeywords: [String] = []) async -> String? {
         guard let output = await runShell("/usr/sbin/lsof", args: ["-i", ":\(port)", "-n", "-P"]) else { return nil }
         for line in output.components(separatedBy: "\n") {
             if excludeKeywords.contains(where: { line.hasPrefix($0) }) { continue }
+            if line.hasPrefix("ollama") { continue }
             if line.contains("OllamaSta") || line.contains("ModelStat") { continue }
             if line.contains("ESTABLISHED"), line.contains("->"), line.contains(":\(port)"),
                let proc = line.split(whereSeparator: { $0.isWhitespace }).first {
@@ -176,11 +188,13 @@ enum LocalProbe {
     }
 
     private static func shellMetricDouble(args: [String], keyword: String) async -> Double? {
+        guard !keyword.isEmpty else { return nil }   // Never match-all
+        let needle = keyword.lowercased()
         guard let output = await runShell("/bin/ps", args: args) else { return nil }
         var total: Double = 0
         for line in output.components(separatedBy: "\n") {
             let t = line.trimmingCharacters(in: .whitespaces)
-            guard t.lowercased().contains(keyword) else { continue }
+            guard t.lowercased().contains(needle) else { continue }
             if let val = Double(t.split(whereSeparator: { $0.isWhitespace }).first ?? "") { total += val }
         }
         return total > 0 ? total : nil

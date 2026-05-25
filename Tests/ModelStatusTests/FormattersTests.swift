@@ -24,7 +24,7 @@ final class FormattersTests: XCTestCase {
         let status = ServerStatus(instance: inst, detectedKind: .ollama, state: .idle,
                                   loadedModels: [], availableModelCount: 0, vramTotal: 0,
                                   lastActive: nil, cpuPercent: nil, memoryMB: nil,
-                                  clientIP: nil, latencyMs: nil)
+                                  clientProcess: nil, latencyMs: nil)
         XCTAssertTrue(Formatters.compactLine(status: status).contains("idle"))
     }
 
@@ -34,7 +34,7 @@ final class FormattersTests: XCTestCase {
         let status = ServerStatus(instance: inst, detectedKind: .ollama, state: .active,
                                   loadedModels: [model], availableModelCount: 5, vramTotal: 8_589_934_592,
                                   lastActive: nil, cpuPercent: nil, memoryMB: nil,
-                                  clientIP: nil, latencyMs: nil)
+                                  clientProcess: nil, latencyMs: nil)
         let line = Formatters.compactLine(status: status)
         XCTAssertTrue(line.contains("M4 Pro"))
         XCTAssertTrue(line.contains("llama3.2:8b"))

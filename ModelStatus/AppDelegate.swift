@@ -24,15 +24,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusIndicator = StatusIndicator()
         UNUserNotificationCenter.current().delegate = self
-        if ConfigManager.shared.notifyOnStateChange {
-            requestNotificationPermission()
-        }
+        // Only request notification permission lazily — when we actually attempt to post
+        // a notification (reachability OR update available). macOS only shows the prompt
+        // once per app, so this avoids surprising users who never enable notifications.
         NotificationCenter.default.addObserver(
             self, selector: #selector(showWelcome),
             name: .settingsRequestedWelcome, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(openSettings),
+            name: .welcomeWindowRequestedSettings, object: nil
+        )
         rebuildMenu()
         startMonitoring()
+
+        // Background update check 5s after launch (lets polling settle first)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await UpdateChecker.check(force: false)
+        }
 
         if !WelcomeWindowController.hasShownBefore {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -41,9 +51,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let m = monitor
-        Task { await m.stopPolling() }
+        Task {
+            await m.stopPolling()
+            await MainActor.run {
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func startMonitoring() {
@@ -69,6 +89,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
+        populateMenu(menu)
+        statusIndicator.setMenu(menu)
+    }
+
+    /// Mutates the passed menu in place so AppKit's currently-displayed menu reflects updates.
+    private func populateMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
 
         menu.addItem(styledItem("Model Status", font: .boldSystemFont(ofSize: 14)))
         menu.addItem(.separator())
@@ -105,22 +133,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         quickStart.target = self
         menu.addItem(quickStart)
 
+        let updateCheck = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateCheck.target = self
+        menu.addItem(updateCheck)
+
         let settings = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
 
         menu.addItem(NSMenuItem(title: "Quit ModelStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-
-        menu.delegate = self
-        statusIndicator.setMenu(menu)
     }
 
-    // NSMenuDelegate — rebuild from latest currentStatuses right before showing so
-    // the menu never displays stale state. Cheap: no network calls, just NSMenuItem rebuild.
-    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
-        Task { @MainActor in
-            self.rebuildMenu()
-        }
+    // NSMenuDelegate — AppKit calls this on main right before display.
+    // Populate the *passed* menu synchronously so the open menu reflects current state.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        populateMenu(menu)
     }
 
     private func addInstanceCompact(to menu: NSMenu, status: ServerStatus) {
@@ -147,7 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 item.target = self
                 if caps.canEject {
                     item.representedObject = EjectInfo(modelName: m.name, instance: status.instance)
-                    item.toolTip = "Click to eject"
+                    item.toolTip = "Loaded model. Click to eject — frees VRAM by sending keep_alive: 0 (Ollama) or /api/v0/models/unload (LM Studio)."
+                } else {
+                    item.toolTip = "Loaded model. Eject is not supported by this provider — restart the server to unload."
                 }
                 let t = NSMutableAttributedString()
                 t.append(muted("     \u{23CF} "))
@@ -157,28 +186,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 menu.addItem(item)
             }
         } else if status.state == .idle {
-            menu.addItem(mutedItem("     \u{1F4E6} no models loaded"))
+            menu.addItem(mutedItem(
+                "     \u{1F4E6} no models loaded",
+                tip: "Server is reachable but has no models loaded in memory. Use \"N models available\" below to preload one."
+            ))
         }
 
         // VRAM total (only if provider reports VRAM and there's more than one model)
         if status.vramTotal > 0 && caps.reportsVRAM && status.loadedModels.count > 1 {
-            menu.addItem(mutedItem("     \u{1F4BE} Total VRAM: \(Formatters.bytes(status.vramTotal))"))
+            menu.addItem(mutedItem(
+                "     \u{1F4BE} Total VRAM: \(Formatters.bytes(status.vramTotal))",
+                tip: "Sum of VRAM used by all loaded models on this server. From the server's /api/ps response."
+            ))
         }
 
         // CPU + Memory (local only)
         var parts: [String] = []
         if let cpu = status.cpuPercent { parts.append(String(format: "%@ %.0f%%", cpu > 50 ? "\u{26A1}" : "\u{1F4A4}", cpu)) }
         if let mem = status.memoryMB { parts.append("\u{1F4BE} \(mem >= 1024 ? String(format: "%.1fGB", Double(mem)/1024) : "\(mem)MB")") }
-        if !parts.isEmpty { menu.addItem(mutedItem("     \(parts.joined(separator: "  "))")) }
+        if !parts.isEmpty {
+            menu.addItem(mutedItem(
+                "     \(parts.joined(separator: "  "))",
+                tip: "CPU % and resident memory of the local server process, sampled from `ps -eo`. ⚡ appears when CPU > 50%. Only available for local instances."
+            ))
+        }
 
-        if let c = status.clientIP { menu.addItem(mutedItem("     \u{1F4E1} \(c)")) }
-        if let t = status.lastActive { menu.addItem(mutedItem("     \u{1F550} \(Formatters.elapsed(since: t))")) }
-        if let lat = status.latencyMs { menu.addItem(mutedItem("     \u{1F4CA} \(lat)ms")) }
+        if let c = status.clientProcess {
+            menu.addItem(mutedItem(
+                "     \u{1F4E1} \(c)",
+                tip: "Process currently connected to this local server (from `lsof -i :PORT`). Tells you who is hitting your model right now — e.g. \"python\", \"curl\", \"Claude\"."
+            ))
+        }
+        if let t = status.lastActive {
+            menu.addItem(mutedItem(
+                "     \u{1F550} \(Formatters.elapsed(since: t))",
+                tip: "Time since this server last had a model load or inference activity. Resets on each poll where the server reports Active or Generating."
+            ))
+        }
+        if let lat = status.latencyMs {
+            menu.addItem(mutedItem(
+                "     \u{1F4CA} \(lat)ms",
+                tip: "Round-trip latency of the most recent status poll. Sudden spikes can hint at the server being busy."
+            ))
+        }
 
         // Available models + Load submenu (only if provider supports loading)
         if status.availableModelCount > 0 {
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = muted("     \u{1F4CB} \(status.availableModelCount) models available")
+            item.toolTip = caps.canLoadModel
+                ? "Models pulled/downloaded on this server. Expand the submenu to preload one into memory."
+                : "Models pulled/downloaded on this server. Preload-from-menu is not supported by this provider."
             if caps.canLoadModel {
                 let submenu = NSMenu()
                 submenu.addItem(NSMenuItem(title: "Load model into memory…", action: nil, keyEquivalent: ""))
@@ -273,12 +331,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         welcomeController?.showWindow()
     }
 
+    @objc private func checkForUpdates() {
+        Task { await UpdateChecker.check(force: true) }
+    }
+
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     private func notifyReachability(instance: Instance, reachable: Bool) {
         guard ConfigManager.shared.notifyOnStateChange else { return }
+        requestNotificationPermission()
         let content = UNMutableNotificationContent()
         content.title = "ModelStatus"
         content.body = reachable ? "\(instance.name) is reachable" : "\(instance.name) became unreachable"
@@ -291,6 +354,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                                             willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
+    }
+
+    // Tap on the "Update available" notification → open the release page.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        if let urlString = response.notification.request.content.userInfo["url"] as? String,
+           let url = URL(string: urlString) {
+            Task { @MainActor in NSWorkspace.shared.open(url) }
+        }
+        completionHandler()
     }
 
     private func statusInfo(_ s: ServerStatus) -> (String, NSColor, String) {
@@ -320,9 +394,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return item
     }
 
-    private func mutedItem(_ text: String) -> NSMenuItem {
+    private func mutedItem(_ text: String, tip: String? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         item.attributedTitle = muted(text)
+        if let tip { item.toolTip = tip }
         return item
     }
 

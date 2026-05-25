@@ -24,16 +24,17 @@ struct OllamaProvider: Provider {
         do {
             let (data, http, _) = try await HTTPHelpers.get(url, instanceID: instance.id, session: session, timeout: 3)
             guard http.statusCode == 200 else { return false }
-            return (try? JSONDecoder().decode(TagsResponse.self, from: data)) != nil
+            // Strict: require the `models` key to be present (even if empty array).
+            return (try? JSONDecoder().decode(TagsResponse.self, from: data))?.models != nil
         } catch { return false }
     }
 
     func check(_ instance: Instance, session: URLSession, isLocal: Bool, localCPU: Double?,
-               localMemMB: Int?, localClientIP: String?, lastActive: Date?) async -> ServerStatus {
+               localMemMB: Int?, localClientProcess: String?, lastActive: Date?) async -> ServerStatus {
         let offline = ServerStatus(instance: instance, detectedKind: .ollama, state: .unreachable,
                                    loadedModels: [], availableModelCount: 0, vramTotal: 0,
                                    lastActive: nil, cpuPercent: nil, memoryMB: nil,
-                                   clientIP: nil, latencyMs: nil)
+                                   clientProcess: nil, latencyMs: nil)
         guard let base = URL(string: instance.url),
               let psURL = URL(string: "/api/ps", relativeTo: base),
               let tagsURL = URL(string: "/api/tags", relativeTo: base) else { return offline }
@@ -66,12 +67,12 @@ struct OllamaProvider: Provider {
                                     loadedModels: loaded, availableModelCount: availCount,
                                     vramTotal: vramTotal, lastActive: lastActive,
                                     cpuPercent: localCPU, memoryMB: localMemMB,
-                                    clientIP: localClientIP, latencyMs: latency)
+                                    clientProcess: localClientProcess, latencyMs: latency)
             }
             return ServerStatus(instance: instance, detectedKind: .ollama, state: .idle,
                                 loadedModels: [], availableModelCount: availCount, vramTotal: 0,
                                 lastActive: nil, cpuPercent: localCPU, memoryMB: localMemMB,
-                                clientIP: nil, latencyMs: latency)
+                                clientProcess: nil, latencyMs: latency)
         } catch { return offline }
     }
 

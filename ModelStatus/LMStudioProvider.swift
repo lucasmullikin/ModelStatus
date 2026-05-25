@@ -22,16 +22,17 @@ struct LMStudioProvider: Provider {
         do {
             let (data, http, _) = try await HTTPHelpers.get(url, instanceID: instance.id, session: session, timeout: 3)
             guard http.statusCode == 200 else { return false }
-            return (try? JSONDecoder().decode(LMStudioModelsResponse.self, from: data)) != nil
+            // Strict: require the `data` key to be present.
+            return (try? JSONDecoder().decode(LMStudioModelsResponse.self, from: data))?.data != nil
         } catch { return false }
     }
 
     func check(_ instance: Instance, session: URLSession, isLocal: Bool, localCPU: Double?,
-               localMemMB: Int?, localClientIP: String?, lastActive: Date?) async -> ServerStatus {
+               localMemMB: Int?, localClientProcess: String?, lastActive: Date?) async -> ServerStatus {
         let offline = ServerStatus(instance: instance, detectedKind: .lmStudio, state: .unreachable,
                                    loadedModels: [], availableModelCount: 0, vramTotal: 0,
                                    lastActive: nil, cpuPercent: nil, memoryMB: nil,
-                                   clientIP: nil, latencyMs: nil)
+                                   clientProcess: nil, latencyMs: nil)
         guard let base = URL(string: instance.url),
               let url = URL(string: "/api/v0/models", relativeTo: base) else { return offline }
 
@@ -47,7 +48,7 @@ struct LMStudioProvider: Provider {
                                 loadedModels: loaded, availableModelCount: all.count,
                                 vramTotal: 0, lastActive: lastActive,
                                 cpuPercent: localCPU, memoryMB: localMemMB,
-                                clientIP: localClientIP, latencyMs: latency)
+                                clientProcess: localClientProcess, latencyMs: latency)
         } catch { return offline }
     }
 

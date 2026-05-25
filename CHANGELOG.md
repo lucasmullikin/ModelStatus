@@ -10,6 +10,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 First public beta of **ModelStatus**. Evolved from the private OllamaStatus experiment into a multi-provider menu bar app for local LLM servers.
 
+### Update notifications (new in 0.1)
+- Lightweight GitHub Releases poller (`UpdateChecker.swift`). Checks at most once per 24h. When a newer tag is published, fires a macOS notification — tap to open the release page. No auto-install, no Sparkle dependency. "Check for Updates…" menu item also exposes manual checks.
+- Semver-aware pre-release comparison: a `v0.1.0-beta` install correctly sees `v0.1.0` stable as an update.
+
+### Tooltips
+- Every info row in the menu dropdown (📡 client process, ⚡/💤 CPU%, 💾 memory, 🕐 last active, 📊 latency, 📦 no models loaded, 📋 N models available, ⏏︎ loaded model) has a hover tooltip explaining what it shows and where the data comes from.
+
+### Audit-pass hardening
+Pre-release audit by Codex 5.5 + code-reviewer surfaced 20 findings. Addressed:
+- **Provider probes** are now strict — require `models` / `data` key present, no longer match an empty `{}` JSON body as a valid backend.
+- **vLLM memory parser** matches `vllm:gpu_memory_usage_bytes` specifically (was summing every line containing both "vllm" and "memory" → double-counted cache + allocator).
+- **`clientIP` → `clientProcess`** rename: the menu's 📡 line actually shows the process name (e.g. "python", "Claude"), not an IP. Field renamed everywhere to match.
+- **`HTTPHelpers.post`** propagates `JSONSerialization` errors instead of silently sending no body (would have caused eject/load to fail silently).
+- **`HTTPHelpers.get`** pre-checks `Content-Length` header before parsing.
+- **`Monitor.startPolling`** resets `lastExpiresAt` so a poll-cycle restart can't spuriously mark `.generating`.
+- **`pollInterval`** clamped to `[1, 600]` with NaN/Inf guard to prevent `Task.sleep` trap.
+- **`shellMetricDouble`** rejects empty keyword (was matching every process line for OpenAI-compat providers with no process binding).
+- **`Discovery.currentSubnetBase`** nil-checks `ifa_addr` (was crashing on interfaces with null sockaddr).
+- **IPv6 hosts** now bracketed in discovery URLs (`http://[fd7a:...]:11434`).
+- **Discovery concurrency** capped at 64 simultaneous probes (was launching 1,270 unbounded).
+- **`menuNeedsUpdate`** is synchronous and mutates the AppKit-passed menu in place — the stale-menu fix actually works now (was being defeated by async rebuild via `Task`).
+- **`welcomeWindowRequestedSettings`** observer added — "Open Settings…" from the Welcome window was a no-op.
+- **`applicationShouldTerminate`** uses the `.terminateLater` reply pattern to actually await `Monitor.stopPolling()` before quitting.
+- **Lazy notification permission**: macOS prompt only fires when we first attempt to post a notification, not unconditionally at launch.
+- **`UpdateChecker` throttle/lastSeen** keys are written AFTER a successful HTTP 200 + notification schedule, so transient failures don't lock out checks for 24h.
+- **`isLocal`** recognizes `::1` IPv6 loopback.
+- **`shellMetricDouble`** normalizes both keyword and process line to lowercase.
+- **`Formatters.compactLine`** returns `""` for zero VRAM instead of `"0 MB"`.
+
 ### Renamed
 - **Project**: OllamaStatus → ModelStatus
 - **Bundle identifier**: `com.lucrativepictures.OllamaStatus` → `com.lucrativepictures.ModelStatus`

@@ -9,8 +9,9 @@ private let logger = Logger(subsystem: ConfigManager.bundleIdentifier, category:
 actor Monitor {
     private var pollTask: Task<Void, Never>?
     private var lastActiveTime: [UUID: Date] = [:]
-    private var lastClientIP: [UUID: String] = [:]
+    private var lastClientProcess: [UUID: String] = [:]
     private var lastReachability: [UUID: Bool] = [:]
+    private var lastExpiresAt: [UUID: String] = [:]         // For remote Ollama generating-detection
     private var detectedKinds: [UUID: ProviderKind] = [:]   // Resolved provider per instance when kind = .auto
 
     typealias StatusCallback = @Sendable ([ServerStatus]) -> Void
@@ -31,15 +32,18 @@ actor Monitor {
         self.onStatusChange = onStatusChange
         self.onReachabilityChange = onReachabilityChange
         lastActiveTime = [:]
-        lastClientIP = [:]
+        lastClientProcess = [:]
         lastReachability = [:]
+        lastExpiresAt = [:]
         detectedKinds = [:]
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
                 await self.poll()
-                let interval = ConfigManager.shared.pollInterval
-                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                let raw = ConfigManager.shared.pollInterval
+                // Clamp: 1s lower bound, 600s upper bound, NaN/inf → 5s default
+                let safe: TimeInterval = raw.isFinite ? max(1, min(600, raw)) : 5
+                try? await Task.sleep(nanoseconds: UInt64(safe * 1_000_000_000))
             }
         }
     }
@@ -79,24 +83,43 @@ actor Monitor {
         let isLocal = LocalProbe.isLocal(instance.url)
         let port = URL(string: instance.url)?.port ?? defaultPort(for: provider.kind)
 
-        async let cpu: Double? = isLocal ? LocalProbe.cpuFor(processKeyword: processKeyword(for: provider.kind)) : nil
-        async let memMB: Int? = isLocal ? LocalProbe.memoryMBFor(processKeyword: processKeyword(for: provider.kind)) : nil
-        async let client: String? = isLocal ? LocalProbe.clientIP(port: port) : nil
+        let keyword = processKeyword(for: provider.kind)
+        async let cpu: Double? = (isLocal && !keyword.isEmpty) ? LocalProbe.cpuFor(processKeyword: keyword) : nil
+        async let memMB: Int? = (isLocal && !keyword.isEmpty) ? LocalProbe.memoryMBFor(processKeyword: keyword) : nil
+        async let client: String? = isLocal ? LocalProbe.clientProcess(port: port) : nil
 
         let localCPU = await cpu
         let localMem = await memMB
-        if let c = await client { lastClientIP[instance.id] = c }
-        let clientIP = lastClientIP[instance.id]
+        if let c = await client { lastClientProcess[instance.id] = c }
+        let clientProcess = lastClientProcess[instance.id]
 
         var status = await provider.check(
             instance, session: session, isLocal: isLocal,
-            localCPU: localCPU, localMemMB: localMem, localClientIP: clientIP,
+            localCPU: localCPU, localMemMB: localMem, localClientProcess: clientProcess,
             lastActive: lastActiveTime[instance.id]
         )
 
+        // Remote Ollama Generating detection: when Ollama bumps expires_at between polls
+        // (because inference reset the keep_alive timer), elevate .active → .generating.
+        // Doesn't fire if keep_alive=-1 since the timestamp never bumps. Honest fallback.
+        if status.state == .active, status.detectedKind == .ollama,
+           let exp = status.loadedModels.first?.expiresAt {
+            let prev = lastExpiresAt[instance.id]
+            lastExpiresAt[instance.id] = exp
+            if let prev, prev != exp {
+                status = ServerStatus(
+                    instance: status.instance, detectedKind: status.detectedKind, state: .generating,
+                    loadedModels: status.loadedModels, availableModelCount: status.availableModelCount,
+                    vramTotal: status.vramTotal, lastActive: status.lastActive,
+                    cpuPercent: status.cpuPercent, memoryMB: status.memoryMB,
+                    clientProcess: status.clientProcess, latencyMs: status.latencyMs
+                )
+            }
+        }
+
         // Track last-active when a new active/generating state appears
         if status.state == .active || status.state == .generating {
-            if lastActiveTime[instance.id] == nil { lastActiveTime[instance.id] = Date() }
+            lastActiveTime[instance.id] = Date()
         }
 
         // If user picked .auto and we resolved a specific kind, record it for later use
@@ -111,7 +134,7 @@ actor Monitor {
                 loadedModels: status.loadedModels, availableModelCount: status.availableModelCount,
                 vramTotal: status.vramTotal, lastActive: t,
                 cpuPercent: status.cpuPercent, memoryMB: status.memoryMB,
-                clientIP: status.clientIP, latencyMs: status.latencyMs
+                clientProcess: status.clientProcess, latencyMs: status.latencyMs
             )
         }
         return status
