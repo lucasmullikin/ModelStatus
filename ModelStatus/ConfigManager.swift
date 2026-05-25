@@ -216,7 +216,10 @@ enum URLValidator {
     static func validate(_ raw: String) -> Result<String, Issue> {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return .failure(.invalid) }
-        if !s.hasPrefix("http://") && !s.hasPrefix("https://") {
+        // Only prepend http:// when there's NO scheme at all. If the user typed an explicit
+        // scheme like file://, ftp://, javascript: — fall through and reject below instead of
+        // mangling it into "http://file:///..." which would still pass the http-scheme check.
+        if !s.contains("://") && !s.lowercased().hasPrefix("javascript:") {
             s = "http://" + s
         }
         guard let url = URL(string: s), let scheme = url.scheme?.lowercased() else {
