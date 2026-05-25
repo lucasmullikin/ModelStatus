@@ -113,11 +113,14 @@ enum PollInterval: TimeInterval, CaseIterable, Sendable {
     }
 }
 
+@MainActor
 final class ConfigManager {
     static let shared = ConfigManager()
 
-    static let bundleIdentifier = "com.lucrativepictures.ModelStatus"
-    private static let legacyBundleIdentifiers = [
+    // Static constants are immutable and safe to read from any isolation domain.
+    // Marking nonisolated makes that explicit so Logger(subsystem:) etc. stay synchronous.
+    nonisolated static let bundleIdentifier = "com.lucrativepictures.ModelStatus"
+    nonisolated private static let legacyBundleIdentifiers = [
         "com.lucrativepictures.OllamaStatus",
         "com.local.ollamastatus"
     ]
@@ -179,7 +182,7 @@ final class ConfigManager {
         save()
     }
 
-    private static func loadWithMigration(target: URL, in prefsDir: URL) -> AppConfig? {
+    nonisolated private static func loadWithMigration(target: URL, in prefsDir: URL) -> AppConfig? {
         if let cfg = load(from: target) { return cfg }
         for legacy in legacyBundleIdentifiers {
             let legacyURL = prefsDir.appendingPathComponent("\(legacy).json")
@@ -188,7 +191,7 @@ final class ConfigManager {
         return nil
     }
 
-    private static func load(from url: URL) -> AppConfig? {
+    nonisolated private static func load(from url: URL) -> AppConfig? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(AppConfig.self, from: data)
     }
