@@ -79,6 +79,9 @@ ok "sha256=${SHA256}"
 
 # ─── 6. update homebrew-tap cask ───────────────────────────────────────────
 bold "→ Updating homebrew-tap/Casks/modelstatus.rb"
+# Match any sha256 line (whether :no_check sentinel or previous real hash) and rewrite.
+sed -i '' -E "s|sha256[[:space:]]+(\":no_check.*\"|\"[a-f0-9]{64}\")|sha256 \"${SHA256}\"|" homebrew-tap/Casks/modelstatus.rb
+# Match `sha256 :no_check` (no quotes) too for first-run case.
 sed -i '' "s|sha256 :no_check.*|sha256 \"${SHA256}\"|" homebrew-tap/Casks/modelstatus.rb
 sed -i '' "s|version \".*\"|version \"${TAG#v}\"|" homebrew-tap/Casks/modelstatus.rb
 grep -E "version|sha256" homebrew-tap/Casks/modelstatus.rb | head -2
