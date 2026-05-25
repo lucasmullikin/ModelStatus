@@ -1,6 +1,17 @@
 # ModelStatus
 
-A macOS menu bar app for monitoring local model servers — **Ollama**, **LM Studio**, **vLLM**, **llama.cpp**, **MLX**, and anything else that speaks the OpenAI-compatible HTTP API.
+[![Build](https://github.com/lucasmullikin/ModelStatus/actions/workflows/build.yml/badge.svg)](https://github.com/lucasmullikin/ModelStatus/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/lucasmullikin/ModelStatus?include_prereleases&sort=semver)](https://github.com/lucasmullikin/ModelStatus/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/lucasmullikin/ModelStatus/total)](https://github.com/lucasmullikin/ModelStatus/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![macOS 13+](https://img.shields.io/badge/macOS-13.0+-blue.svg)](https://www.apple.com/macos/)
+[![Swift 5.9+](https://img.shields.io/badge/Swift-5.9+-orange.svg)](https://swift.org)
+
+A macOS menu bar app for monitoring local AI model servers — **Ollama**, **LM Studio**, **vLLM**, **llama.cpp**, **MLX**, and anything else that speaks the OpenAI-compatible HTTP API. Free, MIT, no telemetry.
+
+```bash
+brew tap lucasmullikin/tap && brew install --cask modelstatus
+```
 
 ## Why
 
