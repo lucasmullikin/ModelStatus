@@ -1,14 +1,14 @@
 # Changelog
 
-All notable changes to ModelStatus (and its predecessor OllamaStatus).
+All notable changes to ModelStatus.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [3.0.0] — 2026-05-25
+## [0.1.0-beta] — 2026-05-25
 
-**ModelStatus** debuts. Renamed from OllamaStatus and refactored into a multi-provider menu bar app for local LLM servers.
+First public beta of **ModelStatus**. Evolved from the private OllamaStatus experiment into a multi-provider menu bar app for local LLM servers.
 
 ### Renamed
 - **Project**: OllamaStatus → ModelStatus

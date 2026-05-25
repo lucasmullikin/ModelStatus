@@ -1,5 +1,5 @@
 import XCTest
-@testable import OllamaStatus
+@testable import ModelStatus
 
 final class URLValidatorTests: XCTestCase {
     func testValidHTTPURL() {

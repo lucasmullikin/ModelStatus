@@ -1,4 +1,4 @@
-# RELEASE-PLAN — ModelStatus v3.0.0
+# RELEASE-PLAN — ModelStatus v0.1.0-beta
 
 **Project:** ModelStatus (formerly OllamaStatus, renamed 2026-05-25)
 **Owner:** Lucrative Pictures LLC
@@ -12,33 +12,33 @@
 
 ## TL;DR
 
-- **Tonight:** Ship ModelStatus v3.0.0 as a public GitHub Release — unsigned .zip, MIT, no App Store. Multi-provider, network discovery, capability-flag UX, Homebrew tap.
+- **Tonight:** Ship ModelStatus v0.1.0-beta as a public GitHub Release — unsigned .zip, MIT, no App Store. Multi-provider, network discovery, capability-flag UX, Homebrew tap.
 - **Next (v3.1):** Buy Apple Developer Program, codesign + notarize, MLXProvider, Sparkle, official Homebrew Cask.
 - **Blocked:** Notarization and App Store are gated on Apple Developer enrollment. No work can proceed on those until the $99/yr account exists.
 
 ---
 
-## Tonight's checklist (v3.0.0 launch)
+## Tonight's checklist (v0.1.0-beta launch)
 
 Complete steps in order. Do not skip ahead.
 
 - [ ] Verify `swift build` succeeds (clean — no errors, no warnings treated as errors)
 - [ ] Verify `./scripts/build-app.sh` produces `build/ModelStatus.app` (check file exists and is a valid app bundle)
-- [ ] Rename parent directory: `mv ~/projects/OllamaStatus ~/projects/ModelStatus` (deferred until end of v3.0 work — do this as the final local step before or after push)
-- [ ] `git add -A && git commit -m "feat!: v3.0.0 — multi-provider rename OllamaStatus→ModelStatus, Ollama + LM Studio + vLLM + OpenAI-compat, network discovery, capability-flag UX"`
+- [ ] Rename parent directory: `mv ~/projects/OllamaStatus ~/projects/ModelStatus` (deferred until end of v0.1.0-beta work — do this as the final local step before or after push)
+- [ ] `git add -A && git commit -m "feat!: v0.1.0-beta — multi-provider rename OllamaStatus→ModelStatus, Ollama + LM Studio + vLLM + OpenAI-compat, network discovery, capability-flag UX"`
 - [ ] `git remote add origin https://github.com/lucasmullikin/ModelStatus.git` (if remote not set; if set use `git remote set-url origin https://github.com/lucasmullikin/ModelStatus.git`)
 - [ ] `git push -u origin main`
-- [ ] `git tag v3.0.0 && git push origin v3.0.0` — this triggers the Release GitHub Action which builds the .zip, computes sha256, and attaches both to the GH Release
+- [ ] `git tag v0.1.0-beta && git push origin v0.1.0-beta` — this triggers the Release GitHub Action which builds the .zip, computes sha256, and attaches both to the GH Release
 - [ ] Verify the `Release` GitHub Action ran green: `gh run list --repo lucasmullikin/ModelStatus --limit 5` and confirm the tag-triggered workflow shows `completed / success`
-- [ ] Verify `.zip` and `.sha256` are attached to the release: `gh release view v3.0.0 --repo lucasmullikin/ModelStatus`
-- [ ] (Optional tonight) Manually edit Release notes on GitHub to highlight key v3.0 features for visitors landing on the releases page
+- [ ] Verify `.zip` and `.sha256` are attached to the release: `gh release view v0.1.0-beta --repo lucasmullikin/ModelStatus`
+- [ ] (Optional tonight) Manually edit Release notes on GitHub to highlight key v0.1.0-beta features for visitors landing on the releases page
 - [ ] (Optional tonight) Create `lucasmullikin/homebrew-tap` repo, push contents of `homebrew-tap/` subdirectory into it (enables `brew install --cask lucasmullikin/tap/modelstatus`)
-- [ ] After `.zip` is confirmed uploaded, compute real sha256: `shasum -a 256 build/ModelStatus-v3.0.0.zip` — update `homebrew-tap/Casks/modelstatus.rb` replacing `:no_check` with the real digest, commit, push
+- [ ] After `.zip` is confirmed uploaded, compute real sha256: `shasum -a 256 build/ModelStatus-v0.1.0-beta.zip` — update `homebrew-tap/Casks/modelstatus.rb` replacing `:no_check` with the real digest, commit, push
 - [ ] (Post-launch, optional) Replace v1.0 install: `pkill OllamaStatus; cp -R build/ModelStatus.app /Applications/; open /Applications/ModelStatus.app`
 
 ---
 
-## What's IN v3.0.0
+## What's IN v0.1.0-beta
 
 All of the following shipped in this release and are present in the binary and source tree:
 
@@ -65,7 +65,7 @@ All of the following shipped in this release and are present in the binary and s
 
 ---
 
-## What's NOT in v3.0.0 (deferred)
+## What's NOT in v0.1.0-beta (deferred)
 
 | Feature | Reason deferred | Target |
 |---|---|---|
@@ -73,7 +73,7 @@ All of the following shipped in this release and are present in the binary and s
 | Mac App Store submission | Sandbox entitlements forbid `ps`, `lsof`, and raw socket scans needed by discovery and process detection | v4.0 (sandboxed degraded build) |
 | Dedicated MLXProvider | `mlx_lm.server` exposes process args and log files, not a stable REST API; needs spec research and a log-file watcher | v3.1 |
 | Sparkle auto-updater | Not worth the bundle complexity before notarization is in place | v3.1 |
-| Per-instance poll-interval overrides | Config schema design needed; app-wide interval is sufficient for v3.0 | v3.1 |
+| Per-instance poll-interval overrides | Config schema design needed; app-wide interval is sufficient for v0.1.0-beta | v3.1 |
 | Mass eject ("eject all loaded models") | Too easy to fire by accident; no undo; rejected after design review | Rejected — not planned |
 | Config export/import UI | Users can hand-edit JSON; no urgency | v3.2 |
 | Cloud APIs (OpenAI, Anthropic, Google) | ModelStatus is explicitly local-host focused; cloud APIs are out of scope by design | Never |
@@ -136,7 +136,7 @@ All of the following shipped in this release and are present in the binary and s
 
 These steps are deferrable. Do not block the tag push on them.
 
-- [ ] Twitter/X post: _"Just shipped ModelStatus v3.0 — monitor any local LLM server from your menu bar. Ollama, LM Studio, vLLM, MLX, llama.cpp. Free, MIT, no telemetry. https://github.com/lucasmullikin/ModelStatus"_
+- [ ] Twitter/X post: _"Just shipped ModelStatus v0.1.0-beta — monitor any local LLM server from your menu bar. Ollama, LM Studio, vLLM, MLX, llama.cpp. Free, MIT, no telemetry. https://github.com/lucasmullikin/ModelStatus"_
 - [ ] Hacker News Show HN — defer until polish, screenshots, and a demo GIF are ready; a bare-source drop without visuals underperforms on HN
 - [ ] Reddit r/LocalLLaMA — strong audience for this tool; needs at minimum one real-world demo GIF and a screenshot of the menu bar in action before posting
 - [ ] Add `menu-bar-app`, `ollama`, `lm-studio`, `local-llm` GitHub topics to the repo — these are indexed by GitHub Topics and surface the project automatically; add in repo Settings → Topics
@@ -148,8 +148,8 @@ These steps are deferrable. Do not block the tag push on them.
 Run these after the tag is live and the Release Action completes:
 
 - [ ] `gh repo view lucasmullikin/ModelStatus` — confirms repo is public and description is set
-- [ ] `gh release view v3.0.0 --repo lucasmullikin/ModelStatus` — confirms release exists, shows .zip and .sha256 as attached assets
-- [ ] `curl -L -o /tmp/test.zip https://github.com/lucasmullikin/ModelStatus/releases/download/v3.0.0/ModelStatus-v3.0.0.zip && unzip -t /tmp/test.zip` — exits 0, confirms zip is not corrupt
+- [ ] `gh release view v0.1.0-beta --repo lucasmullikin/ModelStatus` — confirms release exists, shows .zip and .sha256 as attached assets
+- [ ] `curl -L -o /tmp/test.zip https://github.com/lucasmullikin/ModelStatus/releases/download/v0.1.0-beta/ModelStatus-v0.1.0-beta.zip && unzip -t /tmp/test.zip` — exits 0, confirms zip is not corrupt
 - [ ] Fresh install test: download zip, unzip, `xattr -dr com.apple.quarantine ModelStatus.app`, double-click → 🧠 appears in menu bar, clicking it shows the status menu without crash
 - [ ] Confirm sha256 in `homebrew-tap/Casks/modelstatus.rb` matches `shasum -a 256` output of the released zip (if tap was pushed tonight)
 
@@ -162,6 +162,6 @@ Operator contact: lucas@lucrativepictures.com (do not embed in source code or bu
 
 ---
 
-## Definition of done — v3.0.0
+## Definition of done — v0.1.0-beta
 
-v3.0.0 is complete when: the `v3.0.0` tag is pushed to `https://github.com/lucasmullikin/ModelStatus`, the Release GitHub Action completes green, the `.zip` and `.sha256` artifacts are attached to the GitHub Release, and a fresh download of that zip installs and launches correctly on macOS 13+ (unsigned, with the standard `xattr -dr com.apple.quarantine` workaround). All items marked required in Tonight's checklist are checked. Optional items (Release notes edit, Homebrew tap push) may remain open and be completed within 24 hours without blocking the v3.0.0 designation.
+v0.1.0-beta is complete when: the `v0.1.0-beta` tag is pushed to `https://github.com/lucasmullikin/ModelStatus`, the Release GitHub Action completes green, the `.zip` and `.sha256` artifacts are attached to the GitHub Release, and a fresh download of that zip installs and launches correctly on macOS 13+ (unsigned, with the standard `xattr -dr com.apple.quarantine` workaround). All items marked required in Tonight's checklist are checked. Optional items (Release notes edit, Homebrew tap push) may remain open and be completed within 24 hours without blocking the v0.1.0-beta designation.

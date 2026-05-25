@@ -53,7 +53,7 @@ Then `open /Applications/ModelStatus.app`. The 🧠 icon appears in the menu bar
 
 ### Option B — GitHub Release
 
-1. Download `ModelStatus-v3.0.0.zip` from [Releases](https://github.com/lucasmullikin/ModelStatus/releases)
+1. Download `ModelStatus-v0.1.0-beta.zip` from [Releases](https://github.com/lucasmullikin/ModelStatus/releases)
 2. Unzip, drag `ModelStatus.app` to `/Applications`
 3. `xattr -dr com.apple.quarantine /Applications/ModelStatus.app`
 4. Open it

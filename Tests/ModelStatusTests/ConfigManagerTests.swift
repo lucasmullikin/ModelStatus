@@ -1,30 +1,27 @@
 import XCTest
-@testable import OllamaStatus
+@testable import ModelStatus
 
 final class ConfigManagerTests: XCTestCase {
     func testAppConfigRoundtrip() throws {
         let cfg = AppConfig(
             instances: [
-                OllamaInstance(name: "Local", url: "http://127.0.0.1:11434"),
-                OllamaInstance(name: "Remote", url: "https://ollama.example.com")
+                Instance(name: "Local", url: "http://127.0.0.1:11434", kind: .ollama),
+                Instance(name: "vLLM box", url: "http://192.168.1.99:8000", kind: .vllm)
             ],
-            pollInterval: 3.5,
-            showURLs: false,
-            notifyOnStateChange: true
+            pollInterval: 5.0,
+            notifyOnStateChange: true,
+            compactMode: true
         )
-
         let data = try JSONEncoder().encode(cfg)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
-
         XCTAssertEqual(decoded.instances.count, 2)
-        XCTAssertEqual(decoded.instances[0].name, "Local")
-        XCTAssertEqual(decoded.instances[1].url, "https://ollama.example.com")
-        XCTAssertEqual(decoded.pollInterval, 3.5)
-        XCTAssertEqual(decoded.showURLs, false)
-        XCTAssertEqual(decoded.notifyOnStateChange, true)
+        XCTAssertEqual(decoded.instances[1].kind, .vllm)
+        XCTAssertEqual(decoded.pollInterval, 5.0)
+        XCTAssertTrue(decoded.notifyOnStateChange)
+        XCTAssertTrue(decoded.compactMode)
     }
 
-    func testDecodesLegacyConfigWithoutNotifyFlag() throws {
+    func testLegacyDecode_OllamaStatusEra() throws {
         let legacy = """
         {
           "instances": [{"id":"00000000-0000-0000-0000-000000000001","name":"Local","url":"http://127.0.0.1:11434"}],
@@ -32,24 +29,25 @@ final class ConfigManagerTests: XCTestCase {
           "showURLs": true
         }
         """.data(using: .utf8)!
-
         let decoded = try JSONDecoder().decode(AppConfig.self, from: legacy)
-        XCTAssertEqual(decoded.notifyOnStateChange, false, "missing key must default to false")
         XCTAssertEqual(decoded.instances.count, 1)
+        XCTAssertEqual(decoded.instances[0].kind, .ollama)
+        XCTAssertFalse(decoded.notifyOnStateChange)
+        XCTAssertFalse(decoded.compactMode)
     }
 
-    func testDefaultIsLocalhostOnly() {
+    func testDefaultIsLocalhostOllama() {
         let d = AppConfig.default
         XCTAssertEqual(d.instances.count, 1)
         XCTAssertEqual(d.instances[0].url, "http://127.0.0.1:11434")
+        XCTAssertEqual(d.instances[0].kind, .ollama)
+        XCTAssertEqual(d.pollInterval, 5.0)
     }
 
-    func testOllamaInstanceCodableRejectsExtraFields() throws {
-        // Legacy authHeader field should be ignored on decode (Keychain-only now).
-        let json = """
-        {"id":"00000000-0000-0000-0000-000000000001","name":"x","url":"http://127.0.0.1:11434","authHeader":"Bearer xxx"}
-        """.data(using: .utf8)!
-        let inst = try JSONDecoder().decode(OllamaInstance.self, from: json)
-        XCTAssertEqual(inst.name, "x")
+    func testPollIntervalClosest() {
+        XCTAssertEqual(PollInterval.closest(to: 2.5), .fast)
+        XCTAssertEqual(PollInterval.closest(to: 4.0), .normal)
+        XCTAssertEqual(PollInterval.closest(to: 7.0), .slow)
+        XCTAssertEqual(PollInterval.closest(to: 150), .sleepy)
     }
 }

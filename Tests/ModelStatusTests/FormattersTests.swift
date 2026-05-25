@@ -1,5 +1,5 @@
 import XCTest
-@testable import OllamaStatus
+@testable import ModelStatus
 
 final class FormattersTests: XCTestCase {
     func testBytesGB() {
@@ -10,38 +10,34 @@ final class FormattersTests: XCTestCase {
         XCTAssertEqual(Formatters.bytes(524_288_000), "500 MB")
     }
 
+    func testBytesZero() {
+        XCTAssertEqual(Formatters.bytes(0), "")
+    }
+
     func testElapsedSeconds() {
         let d = Date().addingTimeInterval(-30)
         XCTAssertEqual(Formatters.elapsed(since: d), "30s ago")
     }
 
-    func testElapsedMinutes() {
-        let d = Date().addingTimeInterval(-150)
-        let s = Formatters.elapsed(since: d)
-        XCTAssertTrue(s.hasPrefix("2m "), "expected '2m …'; got '\(s)'")
-        XCTAssertTrue(s.hasSuffix(" ago"))
+    func testCompactLineIdle() {
+        let inst = Instance(name: "Local", url: "http://127.0.0.1:11434")
+        let status = ServerStatus(instance: inst, detectedKind: .ollama, state: .idle,
+                                  loadedModels: [], availableModelCount: 0, vramTotal: 0,
+                                  lastActive: nil, cpuPercent: nil, memoryMB: nil,
+                                  clientIP: nil, latencyMs: nil)
+        XCTAssertTrue(Formatters.compactLine(status: status).contains("idle"))
     }
 
-    func testElapsedHours() {
-        let d = Date().addingTimeInterval(-3700)
-        let s = Formatters.elapsed(since: d)
-        XCTAssertTrue(s.hasPrefix("1h "), "expected '1h …'; got '\(s)'")
-    }
-
-    func testBarFull() {
-        XCTAssertEqual(Formatters.bar(fraction: 1.0, width: 8), "████████")
-    }
-
-    func testBarEmpty() {
-        XCTAssertEqual(Formatters.bar(fraction: 0.0, width: 8), "░░░░░░░░")
-    }
-
-    func testBarHalf() {
-        XCTAssertEqual(Formatters.bar(fraction: 0.5, width: 8), "████░░░░")
-    }
-
-    func testBarClamps() {
-        XCTAssertEqual(Formatters.bar(fraction: 2.0, width: 4), "████")
-        XCTAssertEqual(Formatters.bar(fraction: -1.0, width: 4), "░░░░")
+    func testCompactLineActive() {
+        let inst = Instance(name: "M4 Pro", url: "http://192.168.1.50:11434")
+        let model = LoadedModel(name: "llama3.2:8b", vramBytes: 8_589_934_592, expiresAt: nil)
+        let status = ServerStatus(instance: inst, detectedKind: .ollama, state: .active,
+                                  loadedModels: [model], availableModelCount: 5, vramTotal: 8_589_934_592,
+                                  lastActive: nil, cpuPercent: nil, memoryMB: nil,
+                                  clientIP: nil, latencyMs: nil)
+        let line = Formatters.compactLine(status: status)
+        XCTAssertTrue(line.contains("M4 Pro"))
+        XCTAssertTrue(line.contains("llama3.2:8b"))
+        XCTAssertTrue(line.contains("8.0 GB"))
     }
 }

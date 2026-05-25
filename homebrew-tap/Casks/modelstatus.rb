@@ -1,5 +1,5 @@
 cask "modelstatus" do
-  version "3.0.0"
+  version "0.1.0-beta"
   sha256 :no_check # Replace with actual sha256 once first release is uploaded.
 
   url "https://github.com/lucasmullikin/ModelStatus/releases/download/v#{version}/ModelStatus-v#{version}.zip"

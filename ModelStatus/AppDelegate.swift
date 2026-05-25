@@ -12,7 +12,7 @@ struct LoadInfo {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuDelegate {
     private var statusIndicator: StatusIndicator!
     private let monitor = Monitor()
     private var settingsController: SettingsWindowController?
@@ -111,7 +111,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         menu.addItem(NSMenuItem(title: "Quit ModelStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
+        menu.delegate = self
         statusIndicator.setMenu(menu)
+    }
+
+    // NSMenuDelegate — rebuild from latest currentStatuses right before showing so
+    // the menu never displays stale state. Cheap: no network calls, just NSMenuItem rebuild.
+    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
+        Task { @MainActor in
+            self.rebuildMenu()
+        }
     }
 
     private func addInstanceCompact(to menu: NSMenu, status: ServerStatus) {
@@ -151,11 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             menu.addItem(mutedItem("     \u{1F4E6} no models loaded"))
         }
 
-        // VRAM bar (only if provider reports VRAM)
-        if status.vramTotal > 0 && caps.reportsVRAM {
-            let total = Formatters.systemMemoryBytes
-            let fraction = total > 0 ? min(1.0, Double(status.vramTotal) / Double(total)) : 0
-            menu.addItem(mutedItem("     \(Formatters.bar(fraction: fraction, width: 16)) \(Formatters.bytes(status.vramTotal))"))
+        // VRAM total (only if provider reports VRAM and there's more than one model)
+        if status.vramTotal > 0 && caps.reportsVRAM && status.loadedModels.count > 1 {
+            menu.addItem(mutedItem("     \u{1F4BE} Total VRAM: \(Formatters.bytes(status.vramTotal))"))
         }
 
         // CPU + Memory (local only)

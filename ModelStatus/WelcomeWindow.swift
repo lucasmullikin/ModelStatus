@@ -35,15 +35,24 @@ final class WelcomeWindowController: NSWindowController {
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
 
-        let textView = NSTextView()
+        let initialWidth: CGFloat = 532
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: initialWidth, height: 10_000))
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: 1_000_000, height: 1_000_000)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainerInset = NSSize(width: 0, height: 0)
         textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: initialWidth, height: 1_000_000)
         textView.textStorage?.setAttributedString(welcomeBody())
 
         scrollView.documentView = textView
@@ -87,46 +96,46 @@ final class WelcomeWindowController: NSWindowController {
     private func welcomeBody() -> NSAttributedString {
         let out = NSMutableAttributedString()
         appendTitle(to: out, "🧠 ModelStatus")
-        appendSub(to: out, "A menu bar monitor for local model servers — Ollama, LM Studio, vLLM, llama.cpp, MLX, and anything else that speaks OpenAI-compatible HTTP.\n\n")
+        appendSub(to: out, "Watch every local AI model server you’re running — from the menu bar.\n\n")
 
-        appendHeading(to: out, "Reading the menu bar")
-        appendBody(to: out, "The 🧠 icon shows one colored dot per configured server. Click to open the menu.\n")
+        appendHeading(to: out, "What this app does")
+        appendBody(to: out, "ModelStatus puts a small 🧠 in your menu bar. Beside the brain are colored dots, one per AI model server you’ve told it about. Green = working, yellow = sleeping, red = can’t reach it, blue = thinking right now. Click the brain to see what’s loaded, how much VRAM it’s using, who’s talking to it, and how long since it last did anything.\n\n")
+
+        appendHeading(to: out, "Getting started in 60 seconds")
+        appendNumbered(to: out, [
+            "Make sure at least one model server is running. Common ones: Ollama (brew install ollama && brew services start ollama), LM Studio (turn on its built-in server), vLLM, llama.cpp, or anything that exposes /v1/models.",
+            "Pull a model so there’s something to see: ollama pull llama3.2 (Ollama users), or load one in LM Studio’s UI.",
+            "Look for the 🧠 in your menu bar. By default it’s already polling http://127.0.0.1:11434 (Ollama’s default). If you see a green or yellow dot, you’re live.",
+            "To add another server: click 🧠 → Settings… → Add. Kind = Auto means the app figures out what kind it is for you.",
+            "To find servers on your network: Settings → Discover… scans your LAN and Tailscale peers.",
+        ])
+
+        appendHeading(to: out, "What the dots mean")
         appendLegend(to: out)
-        appendBody(to: out, "\nA blue ‘Generating’ dot appears only for Ollama (which exposes inference state). Other providers show Active/Idle/Unreachable — when you see a blue dot, it's real.\n\n")
+        appendBody(to: out, "\nThe blue ‘Generating’ dot only appears for Ollama, which is the only provider that tells us when it’s actively running inference. Other servers stay green during inference — we don’t pretend to know.\n\n")
 
-        appendHeading(to: out, "Adding servers")
+        appendHeading(to: out, "Things you can do from the menu")
         appendBullets(to: out, [
-            "Settings → Add. Kind = Auto means the app probes the URL and picks Ollama / LM Studio / vLLM / OpenAI-compatible.",
-            "Or Settings → Discover… to scan your local /24 and Tailscale peers automatically.",
-            "Remote servers behind a tunnel: set an Authorization header via Settings → Edit Auth (stored in Keychain, never in JSON).",
+            "Click a loaded model name → ejects it (frees VRAM). Works on Ollama + LM Studio.",
+            "“N models available” → expand the submenu, click any model to preload it. Ollama + LM Studio.",
+            "Start Local Ollama / Stop Local Ollama → toggles your local Ollama service.",
+            "Settings… → manage servers, change poll interval, enable notifications, toggle compact menu mode.",
+            "Show Quick Start… → reopens this window whenever you want.",
         ])
 
-        appendHeading(to: out, "What you can do from the menu")
-        appendBullets(to: out, [
-            "Click a loaded model to eject it (Ollama: keep_alive: 0; LM Studio: /api/v0/models/unload).",
-            "“N models available” → submenu lets you preload a model (Ollama + LM Studio only — generic OpenAI-compat servers don’t expose load).",
-            "Start/Stop Local Ollama — works with brew services and the official Ollama.app install.",
-            "Show Quick Start opens this window again whenever you want.",
-        ])
+        appendHeading(to: out, "Remote servers and authentication")
+        appendBody(to: out, "If your model server is behind Tailscale Funnel, Cloudflare Tunnel, or a reverse proxy that requires an Authorization header, add the server normally, then select it in Settings and click “Edit Auth…”. Your token (e.g. “Bearer xxxxx”) is stored in the macOS Keychain — never in the config file, never synced anywhere.\n\n")
 
-        appendHeading(to: out, "Settings")
+        appendHeading(to: out, "Privacy and where your data lives")
         appendBullets(to: out, [
-            "Poll interval — 2s / 5s / 10s / 30s / 1m / 3m. Default is 5s.",
-            "Compact menu — one-line per server (great when you have 4+ instances).",
-            "Reachability notifications — macOS notification when a server drops or recovers.",
-            "Provider kind — double-click the Kind column to override Auto with a specific provider.",
-        ])
-
-        appendHeading(to: out, "Data & privacy")
-        appendBullets(to: out, [
-            "Config: ~/Library/Preferences/com.lucrativepictures.ModelStatus.json (mode 0600).",
+            "Config: ~/Library/Preferences/com.lucrativepictures.ModelStatus.json (file mode 0600 — your user only).",
             "Auth tokens: macOS Keychain only, scoped to this device.",
-            "No telemetry, no analytics. Only outbound traffic is to the servers you configure.",
-            "Network discovery (Settings → Discover…) is on-demand only — never automatic.",
+            "Discovery scan: only when you click the Discover button. Never automatic.",
+            "Network: only outbound traffic is to the servers you configure. No telemetry, no analytics, no phone-home, no crash reporting.",
         ])
 
         appendHeading(to: out, "Why this app exists")
-        appendBody(to: out, "If you run more than one model server at once — laptop Ollama + Mac mini MLX + a remote vLLM box — there’s no menu-bar tool that monitors them all. ModelStatus is that tool. Open source (MIT), no account, no cloud, no telemetry.\n")
+        appendBody(to: out, "If you run more than one AI model server at once — laptop Ollama + Mac mini MLX + a remote vLLM box — there’s no menu-bar tool that monitors all of them. ModelStatus is that tool. Open source (MIT), no account, no cloud, no telemetry. Built by Lucrative Pictures LLC. Source on GitHub.\n")
 
         return out
     }
@@ -154,6 +163,14 @@ final class WelcomeWindowController: NSWindowController {
     private func appendBullets(to out: NSMutableAttributedString, _ items: [String]) {
         for item in items {
             out.append(NSAttributedString(string: "  •  \(item)\n",
+                attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]))
+        }
+        out.append(NSAttributedString(string: "\n"))
+    }
+
+    private func appendNumbered(to out: NSMutableAttributedString, _ items: [String]) {
+        for (i, item) in items.enumerated() {
+            out.append(NSAttributedString(string: "  \(i + 1).  \(item)\n",
                 attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]))
         }
         out.append(NSAttributedString(string: "\n"))
