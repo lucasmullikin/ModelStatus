@@ -2,17 +2,26 @@
 import PackageDescription
 
 let package = Package(
-    name: "OllamaStatus",
+    name: "ModelStatus",
     platforms: [
         .macOS(.v13)
     ],
     targets: [
         .executableTarget(
-            name: "OllamaStatus",
-            path: "OllamaStatus",
+            name: "ModelStatus",
+            path: "ModelStatus",
+            exclude: [
+                "Info.plist",
+                "ModelStatus.entitlements"
+            ],
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]
+        ),
+        .testTarget(
+            name: "ModelStatusTests",
+            dependencies: ["ModelStatus"],
+            path: "Tests/ModelStatusTests"
         )
     ]
 )

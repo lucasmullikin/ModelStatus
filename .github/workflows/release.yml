@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release .app
+        run: |
+          chmod +x scripts/build-app.sh
+          ./scripts/build-app.sh
+
+      - name: Zip
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent ModelStatus.app ModelStatus-${{ github.ref_name }}.zip
+
+      - name: SHA-256 checksum
+        run: |
+          cd build
+          shasum -a 256 ModelStatus-${{ github.ref_name }}.zip > ModelStatus-${{ github.ref_name }}.zip.sha256
+          cat ModelStatus-${{ github.ref_name }}.zip.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/ModelStatus-${{ github.ref_name }}.zip
+            build/ModelStatus-${{ github.ref_name }}.zip.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -3,14 +3,16 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.local.ollamastatus</string>
+    <string>com.lucrativepictures.ModelStatus</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/OllamaStatus.app/Contents/MacOS/OllamaStatus</string>
+        <string>/Applications/ModelStatus.app/Contents/MacOS/ModelStatus</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <false/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
 </dict>
 </plist>

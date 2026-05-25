@@ -2,3 +2,13 @@
 .swiftpm/
 *.xcodeproj/
 DerivedData/
+build/
+release/
+*.dmg
+*.zip
+.DS_Store
+*.xcuserstate
+xcuserdata/
+# Legacy bundle skeleton — build-app.sh assembles a fresh .app into build/
+ModelStatus.app/
+OllamaStatus.app/
