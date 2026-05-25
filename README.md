@@ -13,6 +13,10 @@ A macOS menu bar app for monitoring local AI model servers — **Ollama**, **LM 
 brew tap lucasmullikin/tap && brew install --cask modelstatus
 ```
 
+<p align="center">
+  <img src="docs/screenshots/dropdown.png" width="320" alt="ModelStatus menu open showing two Ollama servers (Local Mac + M4 Pro) with loaded models, VRAM, latency">
+</p>
+
 ## Why
 
 Most menu bar tools show one status dot for one server. ModelStatus monitors **multiple servers in parallel** — your laptop's Ollama, your Mac mini's MLX, a remote vLLM box behind Tailscale — and surfaces what's loaded, how much VRAM is in use, who's hitting it, and whether something is generating right now.
