@@ -26,30 +26,25 @@ struct ServerStatus: Equatable, Sendable {
     var firstModel: String? { loadedModels.first?.name }
 }
 
-/// Capability flags — UI gates actions on these.
-struct ProviderCapabilities: Sendable {
-    let canEject: Bool          // Send "unload" / keep_alive: 0 to free VRAM
-    let canLoadModel: Bool      // Preload a model into memory
-    let canListAvailable: Bool  // Enumerate downloadable / available models
-    let reportsVRAM: Bool       // VRAM reported via API (not just local lsof)
-    let reportsGenerating: Bool // Can distinguish "active" vs "generating"
+/// Capability flags — UI gates actions on these via `caps.contains(.eject)` etc.
+///
+/// OptionSet rather than struct-of-bools so future capabilities can be added without
+/// breaking every static preset's positional initializer. Each new flag is purely additive.
+struct ProviderCapabilities: OptionSet, Sendable {
+    let rawValue: Int
 
-    static let ollama = ProviderCapabilities(
-        canEject: true, canLoadModel: true, canListAvailable: true,
-        reportsVRAM: true, reportsGenerating: true
-    )
-    static let openAI = ProviderCapabilities(
-        canEject: false, canLoadModel: false, canListAvailable: true,
-        reportsVRAM: false, reportsGenerating: false
-    )
-    static let lmStudio = ProviderCapabilities(
-        canEject: true, canLoadModel: true, canListAvailable: true,
-        reportsVRAM: false, reportsGenerating: false
-    )
-    static let vllm = ProviderCapabilities(
-        canEject: false, canLoadModel: false, canListAvailable: true,
-        reportsVRAM: true, reportsGenerating: false
-    )
+    static let eject              = ProviderCapabilities(rawValue: 1 << 0)
+    static let loadModel          = ProviderCapabilities(rawValue: 1 << 1)
+    static let listAvailable      = ProviderCapabilities(rawValue: 1 << 2)
+    static let reportsVRAM        = ProviderCapabilities(rawValue: 1 << 3)
+    static let reportsGenerating  = ProviderCapabilities(rawValue: 1 << 4)
+
+    // Presets ----------------------------------------------------------------
+
+    static let ollama:   ProviderCapabilities = [.eject, .loadModel, .listAvailable, .reportsVRAM, .reportsGenerating]
+    static let lmStudio: ProviderCapabilities = [.eject, .loadModel, .listAvailable]
+    static let vllm:     ProviderCapabilities = [.listAvailable, .reportsVRAM]
+    static let openAI:   ProviderCapabilities = [.listAvailable]
 }
 
 /// One implementation per backend type. Stateless — all per-instance state lives in Monitor.

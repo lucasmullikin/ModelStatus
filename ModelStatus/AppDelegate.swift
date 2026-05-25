@@ -169,10 +169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Loaded models — eject only if provider supports it
         if !status.loadedModels.isEmpty {
             for m in status.loadedModels {
-                let action: Selector? = caps.canEject ? #selector(ejectModel(_:)) : nil
+                let action: Selector? = caps.contains(.eject) ? #selector(ejectModel(_:)) : nil
                 let item = NSMenuItem(title: "", action: action, keyEquivalent: "")
                 item.target = self
-                if caps.canEject {
+                if caps.contains(.eject) {
                     item.representedObject = EjectInfo(modelName: m.name, instance: status.instance)
                     item.toolTip = "Loaded model. Click to eject — frees VRAM by sending keep_alive: 0 (Ollama) or /api/v0/models/unload (LM Studio)."
                 } else {
@@ -193,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         // VRAM total (only if provider reports VRAM and there's more than one model)
-        if status.vramTotal > 0 && caps.reportsVRAM && status.loadedModels.count > 1 {
+        if status.vramTotal > 0 && caps.contains(.reportsVRAM) && status.loadedModels.count > 1 {
             menu.addItem(mutedItem(
                 "     \u{1F4BE} Total VRAM: \(Formatters.bytes(status.vramTotal))",
                 tip: "Sum of VRAM used by all loaded models on this server. From the server's /api/ps response."
@@ -234,10 +234,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if status.availableModelCount > 0 {
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = muted("     \u{1F4CB} \(status.availableModelCount) models available")
-            item.toolTip = caps.canLoadModel
+            item.toolTip = caps.contains(.loadModel)
                 ? "Models pulled/downloaded on this server. Expand the submenu to preload one into memory."
                 : "Models pulled/downloaded on this server. Preload-from-menu is not supported by this provider."
-            if caps.canLoadModel {
+            if caps.contains(.loadModel) {
                 let submenu = NSMenu()
                 submenu.addItem(NSMenuItem(title: "Load model into memory…", action: nil, keyEquivalent: ""))
                 submenu.addItem(.separator())

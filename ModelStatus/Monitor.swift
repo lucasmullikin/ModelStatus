@@ -177,7 +177,7 @@ actor Monitor {
 
     func ejectModel(name: String, on instance: Instance) async {
         let provider = await resolveProvider(for: instance)
-        guard provider.capabilities.canEject else {
+        guard provider.capabilities.contains(.eject) else {
             logger.notice("eject not supported by provider \(String(describing: provider.kind), privacy: .public)")
             return
         }
@@ -186,7 +186,7 @@ actor Monitor {
 
     func loadModel(name: String, on instance: Instance) async {
         let provider = await resolveProvider(for: instance)
-        guard provider.capabilities.canLoadModel else { return }
+        guard provider.capabilities.contains(.loadModel) else { return }
         await provider.loadModel(name, on: instance, session: session)
     }
 
