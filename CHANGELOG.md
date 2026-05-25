@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1-beta] — 2026-05-25
+
+Hours after v0.1.0-beta shipped, a post-release Codex 5.5 audit caught two
+URL-validator bypasses. Plus polish from the launch-prep work that didn't
+make the v0.1.0 cut.
+
+### Security
+- **URLValidator**: explicit non-http schemes (`file://`, `ftp://`, `mailto:`, `javascript:`, etc.) were getting `http://` prepended and silently passing validation. Now detected via RFC-3986 scheme regex and rejected with `unsupportedScheme`.
+- **URLValidator**: cloud-metadata blocklist match was exact-string. Now lowercases + strips trailing dot before compare, and adds the `metadata` GCP shortcut. `metadata.google.internal.` (trailing dot) and `metadata` (bare hostname) no longer bypass.
+- 6 new XCTest cases covering the bypass vectors.
+
+### Added
+- README: build / release / downloads / license / macOS / Swift badges.
+- README: real screenshot of the menu dropdown (was placeholder).
+- `.github/FUNDING.yml` — GitHub Sponsors button enabled.
+- `docs/launch-posts.md` — drafts for HN / Reddit / Twitter / Mastodon / awesome-lists.
+- `scripts/launch.sh` — one-shot helper to push the Ollama community-integrations PR.
+- `scripts/install-launchagent.sh` — idempotent start-at-login installer (cask caveats only printed instructions; this script actually does it).
+- `scripts/release.sh` — now takes a `TAG` argument (defaults to `v$Info.plist-beta`); stale-tag cleanup is opt-in via env var.
+- GitHub Discussions enabled.
+- 10 repo topics for discovery (`menu-bar-app`, `ollama`, `lm-studio`, `vllm`, `mlx`, `local-llm`, `swift`, `apple-silicon`, `macos`, `llm`).
+- 11 launch issues created on the repo with pre-written copy.
+
+### Misc
+- Repo description set, homepage URL set.
+- Confirmed CI build + tests green on `macos-14` with full Xcode (XCTest unavailable locally with CLT-only).
+
 ## [0.1.0-beta] — 2026-05-25
 
 First public beta of **ModelStatus**. Evolved from the private OllamaStatus experiment into a multi-provider menu bar app for local LLM servers.

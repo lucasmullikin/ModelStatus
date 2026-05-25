@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
-# Single-shot v0.1.0-beta release: push, tag, wait, fetch sha256, update cask, ship tap.
+# Single-shot release: push, tag, wait for CI, fetch sha256, update cask, ship tap.
 # Idempotent where it can be. Stops on first error.
+#
+# Usage: ./scripts/release.sh [TAG]
+#   TAG defaults to whatever's in Info.plist as v<CFBundleShortVersionString>-beta
+#   Or pass explicitly: ./scripts/release.sh v0.1.1-beta
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO="lucasmullikin/ModelStatus"
 TAP_REPO="lucasmullikin/homebrew-tap"
-TAG="v0.1.0-beta"
+
+# Derive default tag from Info.plist if not supplied
+if [[ $# -ge 1 ]]; then
+    TAG="$1"
+else
+    PLIST_VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" ModelStatus/Info.plist)
+    TAG="v${PLIST_VER}-beta"
+fi
+
 ASSET="ModelStatus-${TAG}.zip"
-STALE_TAG="v3.0.0"
+STALE_TAG="${STALE_TAG:-}"   # No stale-tag cleanup by default; set env var if needed
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 ok()   { printf "\033[32m✓\033[0m %s\n" "$*"; }
@@ -29,11 +41,13 @@ bold "→ Pushing main"
 git push origin main
 ok "main pushed"
 
-# ─── 2. delete stale v3.0.0 tag ────────────────────────────────────────────
-bold "→ Cleaning up stale ${STALE_TAG} tag"
-git tag -d "$STALE_TAG" 2>/dev/null || true
-git push origin ":refs/tags/${STALE_TAG}" 2>/dev/null || warn "no remote ${STALE_TAG} tag (already gone)"
-ok "${STALE_TAG} tag removed"
+# ─── 2. delete stale tag (only if STALE_TAG env var set) ───────────────────
+if [[ -n "$STALE_TAG" ]]; then
+    bold "→ Cleaning up stale ${STALE_TAG} tag"
+    git tag -d "$STALE_TAG" 2>/dev/null || true
+    git push origin ":refs/tags/${STALE_TAG}" 2>/dev/null || warn "no remote ${STALE_TAG} tag (already gone)"
+    ok "${STALE_TAG} tag removed"
+fi
 
 # ─── 3. tag v0.1.0-beta and push ───────────────────────────────────────────
 bold "→ Tagging ${TAG}"
