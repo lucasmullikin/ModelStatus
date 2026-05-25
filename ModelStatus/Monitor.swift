@@ -3,16 +3,21 @@ import OSLog
 
 private let logger = Logger(subsystem: ConfigManager.bundleIdentifier, category: "monitor")
 
+/// Per-instance memo state, consolidated from 5 separate dicts in pre-v0.2.
+/// Codable so v0.3+ can persist across launches to avoid the "Checking…" flash on cold start.
+struct InstanceState: Sendable, Codable {
+    var lastActive: Date?
+    var lastClient: String?
+    var lastReachable: Bool?
+    var lastExpiresAt: String?
+    var detectedKind: ProviderKind?
+}
+
 /// Orchestrates polling. One actor for the whole app — owns per-instance memo state
-/// (last activity, cached client IP, detected provider) and dispatches each check to
-/// the appropriate Provider.
+/// and dispatches each check to the appropriate Provider.
 actor Monitor {
     private var pollTask: Task<Void, Never>?
-    private var lastActiveTime: [UUID: Date] = [:]
-    private var lastClientProcess: [UUID: String] = [:]
-    private var lastReachability: [UUID: Bool] = [:]
-    private var lastExpiresAt: [UUID: String] = [:]         // For remote Ollama generating-detection
-    private var detectedKinds: [UUID: ProviderKind] = [:]   // Resolved provider per instance when kind = .auto
+    private var state: [UUID: InstanceState] = [:]
 
     typealias StatusCallback = @Sendable ([ServerStatus]) -> Void
     typealias ReachabilityCallback = @Sendable (Instance, Bool) -> Void
@@ -31,11 +36,7 @@ actor Monitor {
                       onReachabilityChange: @escaping ReachabilityCallback = { _, _ in }) {
         self.onStatusChange = onStatusChange
         self.onReachabilityChange = onReachabilityChange
-        lastActiveTime = [:]
-        lastClientProcess = [:]
-        lastReachability = [:]
-        lastExpiresAt = [:]
-        detectedKinds = [:]
+        state = [:]
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
@@ -69,8 +70,8 @@ actor Monitor {
 
         for s in ordered {
             let reachable = s.state != .unreachable
-            if lastReachability[s.instance.id] != reachable {
-                lastReachability[s.instance.id] = reachable
+            if state[s.instance.id]?.lastReachable != reachable {
+                state[s.instance.id, default: InstanceState()].lastReachable = reachable
                 onReachabilityChange?(s.instance, reachable)
             }
         }
@@ -90,13 +91,13 @@ actor Monitor {
 
         let localCPU = await cpu
         let localMem = await memMB
-        if let c = await client { lastClientProcess[instance.id] = c }
-        let clientProcess = lastClientProcess[instance.id]
+        if let c = await client { state[instance.id, default: InstanceState()].lastClient = c }
+        let clientProcess = state[instance.id]?.lastClient
 
         var status = await provider.check(
             instance, session: session, isLocal: isLocal,
             localCPU: localCPU, localMemMB: localMem, localClientProcess: clientProcess,
-            lastActive: lastActiveTime[instance.id]
+            lastActive: state[instance.id]?.lastActive
         )
 
         // Remote Ollama Generating detection: when Ollama bumps expires_at between polls
@@ -104,8 +105,8 @@ actor Monitor {
         // Doesn't fire if keep_alive=-1 since the timestamp never bumps. Honest fallback.
         if status.state == .active, status.detectedKind == .ollama,
            let exp = status.loadedModels.first?.expiresAt {
-            let prev = lastExpiresAt[instance.id]
-            lastExpiresAt[instance.id] = exp
+            let prev = state[instance.id]?.lastExpiresAt
+            state[instance.id, default: InstanceState()].lastExpiresAt = exp
             if let prev, prev != exp {
                 status = ServerStatus(
                     instance: status.instance, detectedKind: status.detectedKind, state: .generating,
@@ -119,16 +120,16 @@ actor Monitor {
 
         // Track last-active when a new active/generating state appears
         if status.state == .active || status.state == .generating {
-            lastActiveTime[instance.id] = Date()
+            state[instance.id, default: InstanceState()].lastActive = Date()
         }
 
         // If user picked .auto and we resolved a specific kind, record it for later use
         if instance.kind == .auto && status.state != .unreachable {
-            detectedKinds[instance.id] = status.detectedKind
+            state[instance.id, default: InstanceState()].detectedKind = status.detectedKind
         }
 
         // Re-emit lastActive in the status if we have a memoized one
-        if status.lastActive == nil, let t = lastActiveTime[instance.id] {
+        if status.lastActive == nil, let t = state[instance.id]?.lastActive {
             status = ServerStatus(
                 instance: status.instance, detectedKind: status.detectedKind, state: status.state,
                 loadedModels: status.loadedModels, availableModelCount: status.availableModelCount,
@@ -144,11 +145,11 @@ actor Monitor {
         if instance.kind != .auto {
             return ProviderRegistry.provider(for: instance.kind)
         }
-        if let detected = detectedKinds[instance.id] {
+        if let detected = state[instance.id]?.detectedKind {
             return ProviderRegistry.provider(for: detected)
         }
         if let p = await ProviderRegistry.detect(instance, session: session) {
-            detectedKinds[instance.id] = p.kind
+            state[instance.id, default: InstanceState()].detectedKind = p.kind
             return p
         }
         // Fallback: try OpenAI generic so we at least report unreachable cleanly
@@ -201,7 +202,7 @@ actor Monitor {
 
     func detectedKind(for instance: Instance) async -> ProviderKind {
         if instance.kind != .auto { return instance.kind }
-        return detectedKinds[instance.id] ?? .openAI
+        return state[instance.id]?.detectedKind ?? .openAI
     }
 
     // MARK: - Local Ollama control (kept for the menu's start/stop button)
