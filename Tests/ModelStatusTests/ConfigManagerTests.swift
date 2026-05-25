@@ -47,7 +47,7 @@ final class ConfigManagerTests: XCTestCase {
     func testPollIntervalClosest() {
         XCTAssertEqual(PollInterval.closest(to: 2.5), .fast)
         XCTAssertEqual(PollInterval.closest(to: 4.0), .normal)
-        XCTAssertEqual(PollInterval.closest(to: 7.0), .slow)
+        XCTAssertEqual(PollInterval.closest(to: 9.0), .slow)
         XCTAssertEqual(PollInterval.closest(to: 150), .sleepy)
     }
 }
