@@ -213,22 +213,37 @@ enum URLValidator {
         }
     }
 
+    private static let schemeRegex = try! NSRegularExpression(pattern: "^[A-Za-z][A-Za-z0-9+.-]*:")
+
+    /// Canonical form of well-known cloud-metadata hosts. Strip trailing dot, lowercase,
+    /// fold IPv4 variants. This is intentionally not exhaustive — link-local IP-range
+    /// blocking belongs at request time, not config time.
+    private static let blockedHosts: Set<String> = [
+        "169.254.169.254",
+        "fd00:ec2::254",
+        "metadata.google.internal",
+        "metadata"               // GCP shortcut
+    ]
+
     static func validate(_ raw: String) -> Result<String, Issue> {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return .failure(.invalid) }
-        // Only prepend http:// when there's NO scheme at all. If the user typed an explicit
-        // scheme like file://, ftp://, javascript: — fall through and reject below instead of
-        // mangling it into "http://file:///..." which would still pass the http-scheme check.
-        if !s.contains("://") && !s.lowercased().hasPrefix("javascript:") {
+        // Detect an explicit scheme via RFC-style regex. Only prepend http:// when there's
+        // truly no scheme — otherwise pass the user's input through so file:/, ftp:/,
+        // javascript:, mailto: etc. get rejected at the scheme allowlist below.
+        let range = NSRange(s.startIndex..., in: s)
+        if schemeRegex.firstMatch(in: s, range: range) == nil {
             s = "http://" + s
         }
         guard let url = URL(string: s), let scheme = url.scheme?.lowercased() else {
             return .failure(.invalid)
         }
         if scheme != "http" && scheme != "https" { return .failure(.unsupportedScheme) }
-        guard let host = url.host, !host.isEmpty else { return .failure(.missingHost) }
-        let blocked: Set<String> = ["169.254.169.254", "fd00:ec2::254", "metadata.google.internal"]
-        if blocked.contains(host.lowercased()) { return .failure(.suspiciousHost) }
+        guard let rawHost = url.host, !rawHost.isEmpty else { return .failure(.missingHost) }
+        // Canonicalize: lowercase, strip trailing dot.
+        var host = rawHost.lowercased()
+        if host.hasSuffix(".") { host.removeLast() }
+        if blockedHosts.contains(host) { return .failure(.suspiciousHost) }
         return .success(s)
     }
 }

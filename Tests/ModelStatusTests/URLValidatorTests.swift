@@ -41,6 +41,36 @@ final class URLValidatorTests: XCTestCase {
         }
     }
 
+    func testRejectsGCPMetadataTrailingDot() {
+        if case .success = URLValidator.validate("http://metadata.google.internal./") {
+            XCTFail("metadata host with trailing dot must be rejected")
+        }
+    }
+
+    func testRejectsGCPMetadataShortcut() {
+        if case .success = URLValidator.validate("http://metadata/computeMetadata/v1/") {
+            XCTFail("'metadata' short host must be rejected")
+        }
+    }
+
+    func testRejectsMailtoScheme() {
+        if case .success = URLValidator.validate("mailto:foo@example.com") {
+            XCTFail("mailto: must be rejected")
+        }
+    }
+
+    func testRejectsJavascriptScheme() {
+        if case .success = URLValidator.validate("javascript:alert(1)") {
+            XCTFail("javascript: must be rejected")
+        }
+    }
+
+    func testRejectsFTPScheme() {
+        if case .success = URLValidator.validate("ftp://example.com/") {
+            XCTFail("ftp:// must be rejected")
+        }
+    }
+
     func testRejectsEmpty() {
         if case .success = URLValidator.validate("") {
             XCTFail("empty string must be rejected")
