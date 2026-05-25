@@ -58,7 +58,9 @@ actor Monitor {
     /// Returns the captured `PollContext` so the run-loop can use its `pollInterval`
     /// for the sleep — making the snapshot the single source of truth for the cycle.
     private func poll() async -> PollContext {
-        let ctx = ConfigManager.shared.snapshotForPoll()   // After step B this becomes MainActor.run { ... }
+        // ConfigManager is @MainActor (v0.2 step B); a single MainActor hop per cycle
+        // captures everything we need for the rest of poll() to run actor-local.
+        let ctx = await MainActor.run { ConfigManager.shared.snapshotForPoll() }
         let statuses = await withTaskGroup(of: ServerStatus.self) { group in
             for inst in ctx.instances { group.addTask { await self.check(inst) } }
             var r: [ServerStatus] = []
