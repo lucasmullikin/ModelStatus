@@ -50,17 +50,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let m = monitor
         Task {
             await m.startPolling(
-                onStatusChange: { [weak self] statuses in
+                onStatusChange: { statuses in
                     Task { @MainActor in
-                        guard let self else { return }
-                        self.currentStatuses = statuses
-                        self.statusIndicator.updateStatuses(statuses)
-                        self.rebuildMenu()
+                        guard let d = NSApp.delegate as? AppDelegate else { return }
+                        d.currentStatuses = statuses
+                        d.statusIndicator.updateStatuses(statuses)
+                        d.rebuildMenu()
                     }
                 },
-                onReachabilityChange: { [weak self] instance, reachable in
+                onReachabilityChange: { instance, reachable in
                     Task { @MainActor in
-                        self?.notifyReachability(instance: instance, reachable: reachable)
+                        (NSApp.delegate as? AppDelegate)?.notifyReachability(instance: instance, reachable: reachable)
                     }
                 }
             )

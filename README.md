@@ -2,8 +2,6 @@
 
 A macOS menu bar app for monitoring local model servers — **Ollama**, **LM Studio**, **vLLM**, **llama.cpp**, **MLX**, and anything else that speaks the OpenAI-compatible HTTP API.
 
-![menu bar screenshot placeholder](docs/screenshots/menubar.png)
-
 ## Why
 
 Most menu bar tools show one status dot for one server. ModelStatus monitors **multiple servers in parallel** — your laptop's Ollama, your Mac mini's MLX, a remote vLLM box behind Tailscale — and surfaces what's loaded, how much VRAM is in use, who's hitting it, and whether something is generating right now.
