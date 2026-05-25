@@ -40,10 +40,9 @@ actor Monitor {
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
-                await self.poll()
-                let raw = ConfigManager.shared.pollInterval
+                let ctx = await self.poll()
                 // Clamp: 1s lower bound, 600s upper bound, NaN/inf → 5s default
-                let safe: TimeInterval = raw.isFinite ? max(1, min(600, raw)) : 5
+                let safe: TimeInterval = ctx.pollInterval.isFinite ? max(1, min(600, ctx.pollInterval)) : 5
                 try? await Task.sleep(nanoseconds: UInt64(safe * 1_000_000_000))
             }
         }
@@ -56,17 +55,19 @@ actor Monitor {
         onReachabilityChange = nil
     }
 
-    private func poll() async {
-        let instances = ConfigManager.shared.instances
+    /// Returns the captured `PollContext` so the run-loop can use its `pollInterval`
+    /// for the sleep — making the snapshot the single source of truth for the cycle.
+    private func poll() async -> PollContext {
+        let ctx = ConfigManager.shared.snapshotForPoll()   // After step B this becomes MainActor.run { ... }
         let statuses = await withTaskGroup(of: ServerStatus.self) { group in
-            for inst in instances { group.addTask { await self.check(inst) } }
+            for inst in ctx.instances { group.addTask { await self.check(inst) } }
             var r: [ServerStatus] = []
             for await s in group { r.append(s) }
             return r
         }
         var map: [UUID: ServerStatus] = [:]
         for s in statuses { map[s.instance.id] = s }
-        let ordered = instances.compactMap { map[$0.id] }
+        let ordered = ctx.instances.compactMap { map[$0.id] }
 
         for s in ordered {
             let reachable = s.state != .unreachable
@@ -77,6 +78,7 @@ actor Monitor {
         }
 
         onStatusChange?(ordered)
+        return ctx
     }
 
     private func check(_ instance: Instance) async -> ServerStatus {

@@ -47,23 +47,27 @@ struct AppConfig: Codable {
     var pollInterval: TimeInterval
     var notifyOnStateChange: Bool
     var compactMode: Bool
+    var verboseLogging: Bool
 
     static let `default` = AppConfig(
         instances: [Instance(name: "Local", url: "http://127.0.0.1:11434", kind: .ollama)],
         pollInterval: 5.0,
         notifyOnStateChange: false,
-        compactMode: false
+        compactMode: false,
+        verboseLogging: false
     )
 
     enum CodingKeys: String, CodingKey {
-        case instances, pollInterval, notifyOnStateChange, compactMode
+        case instances, pollInterval, notifyOnStateChange, compactMode, verboseLogging
     }
 
-    init(instances: [Instance], pollInterval: TimeInterval, notifyOnStateChange: Bool, compactMode: Bool) {
+    init(instances: [Instance], pollInterval: TimeInterval,
+         notifyOnStateChange: Bool, compactMode: Bool, verboseLogging: Bool = false) {
         self.instances = instances
         self.pollInterval = pollInterval
         self.notifyOnStateChange = notifyOnStateChange
         self.compactMode = compactMode
+        self.verboseLogging = verboseLogging
     }
 
     init(from decoder: Decoder) throws {
@@ -72,7 +76,22 @@ struct AppConfig: Codable {
         self.pollInterval = try c.decodeIfPresent(TimeInterval.self, forKey: .pollInterval) ?? 5.0
         self.notifyOnStateChange = try c.decodeIfPresent(Bool.self, forKey: .notifyOnStateChange) ?? false
         self.compactMode = try c.decodeIfPresent(Bool.self, forKey: .compactMode) ?? false
+        self.verboseLogging = try c.decodeIfPresent(Bool.self, forKey: .verboseLogging) ?? false
     }
+}
+
+/// Per-poll-cycle snapshot of config + cycle metadata. Built once at the top of
+/// `Monitor.poll()` (eventually via `MainActor.run` once ConfigManager is @MainActor)
+/// and used in lieu of direct `ConfigManager.shared.X` reads from actor contexts.
+///
+/// Threaded through Monitor only today; the diagnostics pass (E) will extend this
+/// to Provider.probe/check so the per-provider `verbose()` helper can read
+/// `ctx.verbose` without crossing actor boundaries.
+struct PollContext: Sendable {
+    let verbose: Bool
+    let pollInterval: TimeInterval
+    let instances: [Instance]
+    let timestamp: Date
 }
 
 enum PollInterval: TimeInterval, CaseIterable, Sendable {
@@ -129,6 +148,22 @@ final class ConfigManager {
     var compactMode: Bool {
         get { _config.compactMode }
         set { _config.compactMode = newValue; save() }
+    }
+
+    var verboseLogging: Bool {
+        get { _config.verboseLogging }
+        set { _config.verboseLogging = newValue; save() }
+    }
+
+    /// Snapshot reader used by `Monitor.poll()` to capture config in a single hop.
+    /// After v0.2 step B this becomes the only legal way to read config from non-MainActor contexts.
+    func snapshotForPoll() -> PollContext {
+        PollContext(
+            verbose: _config.verboseLogging,
+            pollInterval: _config.pollInterval,
+            instances: _config.instances,
+            timestamp: Date()
+        )
     }
 
     private init() {
