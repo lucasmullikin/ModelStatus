@@ -38,6 +38,7 @@ protocol LocalSystemAccess: Sendable {
     func clientProcess(port: Int, excludeKeywords: [String]) async -> String?
     func establishedConnectionPresent(port: Int, excludingPids: Set<Int>) async -> Bool
     func pidsFor(processName: String) async -> Set<Int>
+    func localProcessOnPort(_ port: Int) async -> LocalProcessInfo?
     func runShell(_ path: String, args: [String], timeout: TimeInterval) async -> String?
 }
 
@@ -62,8 +63,11 @@ struct DirectLocalSystemAccess: LocalSystemAccess {
     func pidsFor(processName: String) async -> Set<Int> {
         await LocalProbe.pidsFor(processName: processName)
     }
+    func localProcessOnPort(_ port: Int) async -> LocalProcessInfo? {
+        await LocalProbe.localProcessOnPort(port)
+    }
     func runShell(_ path: String, args: [String], timeout: TimeInterval) async -> String? {
-        await LocalProbe.runShell(path, args: args, timeout: timeout)
+        await Shell.run(path, args: args, timeout: timeout)
     }
 }
 
@@ -82,6 +86,7 @@ struct SandboxedLocalSystemAccess: LocalSystemAccess {
     func clientProcess(port: Int, excludeKeywords: [String]) async -> String? { nil }
     func establishedConnectionPresent(port: Int, excludingPids: Set<Int>) async -> Bool { false }
     func pidsFor(processName: String) async -> Set<Int> { [] }
+    func localProcessOnPort(_ port: Int) async -> LocalProcessInfo? { nil }
     func runShell(_ path: String, args: [String], timeout: TimeInterval) async -> String? { nil }
 }
 

@@ -306,11 +306,13 @@ enum Anonymizer {
         // replace the host span with `host-<sha>`.
         s = replaceMatches(s, regex: malformedHostPattern) { match in
             // Audit-round-D43: use the regex's TWO capture groups (prefix,
-            // authority) instead of re-splitting the matched string by ":".
-            // The `://` / `/` alternative now produces three possible
-            // separator shapes, and string-search can pick the wrong one
-            // (e.g. `http:/host` would split at `:` and capture `/host` as
             // authority). Re-run the regex against the match to read groups.
+            //
+            // Architect-D53 #42: parse via shared `parseAuthority` +
+            // `renderHashedAuthority`. Previously this inlined ~50 lines of
+            // bracketed-IPv6 + host:port + credential-strip + looksLikeHost
+            // logic that's now consolidated. Audit invariants (D20 / D22 /
+            // D51-hard / etc.) are preserved by the shared helpers.
             let nsm = NSRange(match.startIndex..., in: match)
             guard let result = malformedHostPattern.firstMatch(in: match, range: nsm),
                   result.numberOfRanges >= 3,
@@ -320,70 +322,20 @@ enum Anonymizer {
             }
             let prefix = match[prefixRange]
             let authority = String(match[authorityRange])
-            // Drop credentials before splitting host from port.
-            let postCreds: String = {
-                if let atIdx = authority.lastIndex(of: "@") {
-                    return String(authority[authority.index(after: atIdx)...])
-                }
-                return authority
-            }()
-            guard !postCreds.isEmpty else { return match }
-            // Audit-round-D20: split `host:port` so we hash only the HOST,
-            // preserve the port. Otherwise the same logical host hashes
-            // differently depending on whether a port was present in the
-            // malformed input.
-            let hostPart: String
-            let portSuffix: String
-            if postCreds.hasPrefix("[") {
-                // Bracketed IPv6 authority: keep the brackets, find `:port` after `]`.
-                if let closeBracket = postCreds.firstIndex(of: "]") {
-                    let inside = String(postCreds[postCreds.index(after: postCreds.startIndex)..<closeBracket])
-                    hostPart = "[" + inside + "]"
-                    let tail = postCreds[postCreds.index(after: closeBracket)...]
-                    portSuffix = String(tail)
-                } else {
-                    hostPart = postCreds
-                    portSuffix = ""
-                }
-            } else if let colon = postCreds.lastIndex(of: ":"),
-                      postCreds[postCreds.index(after: colon)...].allSatisfy({ $0.isASCII && $0.isNumber }) {
-                hostPart = String(postCreds[postCreds.startIndex..<colon])
-                portSuffix = String(postCreds[colon...])
-            } else {
-                hostPart = postCreds
-                portSuffix = ""
+            let parsed = Self.parseAuthority(authority)
+            guard !parsed.host.isEmpty else { return match }
+            // Audit-round-D51-hard preserved: leave non-host-shaped captures
+            // alone so the straddled-cred-host pattern can claim them.
+            // `renderHashedAuthority` makes that decision via `looksLikeHost`
+            // internally, but the malformed-URL path needs to TOTALLY skip
+            // the replacement when host isn't host-shaped (so the regex
+            // engine doesn't consume the span). Pre-check here for the same
+            // gate.
+            let hostForHashCheck = parsed.bracketedIPv6 ? parsed.host : parsed.host
+            guard isHashedHost(hostForHashCheck) || looksLikeHost(hostForHashCheck) else {
+                return match
             }
-            // Strip brackets for hashing so [fd00::1] and fd00::1 hash equal.
-            let hostForHash: String = {
-                if hostPart.hasPrefix("[") && hostPart.hasSuffix("]") {
-                    return String(hostPart.dropFirst().dropLast())
-                }
-                return hostPart
-            }()
-            // Audit-round-D22: preserve only when the ENTIRE host matches the
-            // hashed-host shape — anchored, not a prefix. Previously a host
-            // like `host-<64hex>.evil.example` would be treated as
-            // already-anonymized and leak the suffix.
-            if isHashedHost(hostForHash) {
-                let credPrefix = authority.contains("@") ? "<redacted>@" : ""
-                let outHost = hostPart.hasPrefix("[") ? "[\(hostForHash)]" : hostForHash
-                return "\(prefix)\(credPrefix)\(outHost)\(portSuffix)"
-            }
-            // Audit-round-D51-hard: gate the hash on looksLikeHost. For
-            // malformed inputs like `http://user/secret@example.local/path`
-            // the regex captures `user` as the apparent authority — but
-            // `user` is not a host, it's the credential portion that ended
-            // up in the path because the URL is malformed. Hashing it
-            // (a) loses the hint that the URL was malformed and (b) papers
-            // over a real privacy leak that `straddledCredHostPattern`
-            // handles correctly by hashing the LATER `@example.local`.
-            // When the captured token doesn't look like a host, leave it
-            // alone so the @host pattern downstream can claim it instead.
-            guard looksLikeHost(hostForHash) else { return match }
-            let hashedInner = "host-\(hashHost(hostForHash))"
-            let hashed = hostPart.hasPrefix("[") ? "[\(hashedInner)]" : hashedInner
-            let credPrefix = authority.contains("@") ? "<redacted>@" : ""
-            return "\(prefix)\(credPrefix)\(hashed)\(portSuffix)"
+            return "\(prefix)\(Self.renderHashedAuthority(parsed))"
         }
         // Strip from the EARLIEST of `?` or `#` to end. Audit-round-D26: if
         // `#` comes first (malformed `path#frag?token=`), the previous
@@ -401,6 +353,98 @@ enum Anonymizer {
         }()
         if let cut { s = String(s[s.startIndex..<cut]) }
         return s
+    }
+
+    // MARK: - ParsedAuthority (architect-D53 #42: consolidation)
+
+    /// Architect-D53 #42: shared value type for the three URL-parsing pipelines
+    /// in this file (URLComponents-primary path, hostless-recovery branch,
+    /// malformed-regex fallback). The previous version inlined the
+    /// `host[:port]` / `[ipv6]:port` / credential-strip logic at each call
+    /// site — every new edge case had to be patched in 3 places.
+    ///
+    /// `host` stores the unbracketed inner address for IPv6; `bracketedIPv6`
+    /// records whether the original input used `[]` syntax so we can
+    /// re-bracket on render. `port` includes its leading `:` (e.g. `:11434`)
+    /// or is nil when the input had no port.
+    struct ParsedAuthority: Equatable {
+        let credentialsPresent: Bool
+        let host: String          // unbracketed form
+        let bracketedIPv6: Bool
+        let port: String?         // ":11434" / ":443" / nil
+    }
+
+    /// Parse a raw authority string (`user:pass@host:port`, `[ipv6]:port`,
+    /// `host`, `host:port`, etc.) into its component pieces. The caller is
+    /// responsible for having already extracted the authority span from the
+    /// surrounding URL (i.e. dropped `scheme://` and stopped at `/?#`).
+    ///
+    /// Empty input is preserved as `ParsedAuthority(credentialsPresent: false,
+    /// host: "", ...)` so callers can pattern-match on `host.isEmpty`.
+    static func parseAuthority(_ raw: String) -> ParsedAuthority {
+        // Strip credentials: last `@` between scheme/authority terminator.
+        var working = raw
+        var hadCreds = false
+        if let atIdx = working.lastIndex(of: "@") {
+            working = String(working[working.index(after: atIdx)...])
+            hadCreds = true
+        }
+        // Bracketed IPv6 authority: `[fd00::1]:8080` or `[fd00::1]`.
+        if working.hasPrefix("[") {
+            if let closeBracket = working.firstIndex(of: "]") {
+                let inside = String(working[working.index(after: working.startIndex)..<closeBracket])
+                let tail = working[working.index(after: closeBracket)...]
+                let port: String? = tail.isEmpty ? nil : String(tail)
+                return ParsedAuthority(credentialsPresent: hadCreds,
+                                       host: inside,
+                                       bracketedIPv6: true,
+                                       port: port)
+            }
+            // Malformed `[…` with no closing bracket — return the whole thing
+            // as host so the caller can decide what to do.
+            return ParsedAuthority(credentialsPresent: hadCreds,
+                                   host: working,
+                                   bracketedIPv6: false,
+                                   port: nil)
+        }
+        // `host:port` — last `:` followed entirely by digits.
+        if let colon = working.lastIndex(of: ":"),
+           working.index(after: colon) <= working.endIndex,
+           working[working.index(after: colon)...].allSatisfy({ $0.isASCII && $0.isNumber }) {
+            let host = String(working[working.startIndex..<colon])
+            let port = String(working[colon...])
+            return ParsedAuthority(credentialsPresent: hadCreds,
+                                   host: host,
+                                   bracketedIPv6: false,
+                                   port: port)
+        }
+        return ParsedAuthority(credentialsPresent: hadCreds,
+                               host: working,
+                               bracketedIPv6: false,
+                               port: nil)
+    }
+
+    /// Render a `ParsedAuthority` back as a string with the host hashed
+    /// (when it looks like a host) and credentials replaced with the
+    /// `<redacted>@` token. Idempotent on already-anonymized hosts via
+    /// `isHashedHost`.
+    static func renderHashedAuthority(_ p: ParsedAuthority) -> String {
+        let credPrefix = p.credentialsPresent ? "<redacted>@" : ""
+        guard !p.host.isEmpty else { return credPrefix + (p.port ?? "") }
+        // Decide the rendered host:
+        // 1. Already-anonymized? Keep as-is (idempotency).
+        // 2. Host-shaped? Hash it.
+        // 3. Otherwise leave alone (path-fragment or junk; let caller decide).
+        let renderedHost: String
+        if isHashedHost(p.host) {
+            renderedHost = p.host
+        } else if looksLikeHost(p.bracketedIPv6 ? p.host : p.host) {
+            renderedHost = "host-\(hashHost(p.host))"
+        } else {
+            renderedHost = p.host
+        }
+        let withBrackets = p.bracketedIPv6 ? "[\(renderedHost)]" : renderedHost
+        return credPrefix + withBrackets + (p.port ?? "")
     }
 
     /// Heuristic for "does this string look like a hostname / IP literal".
@@ -530,61 +574,28 @@ enum Anonymizer {
                 }
             }
             if let hi = hostIdx {
-                let rawHostLike = rawSegments[hi]
-                let hostPlusPort: String
-                let hadCredentials: Bool
-                if let atIdx = rawHostLike.lastIndex(of: "@") {
-                    hostPlusPort = String(rawHostLike[rawHostLike.index(after: atIdx)...])
-                    hadCredentials = true
-                } else {
-                    hostPlusPort = rawHostLike
-                    hadCredentials = false
-                }
-                // Audit-round-D38: split host from port BEFORE the
-                // looksLikeHost check, otherwise `example.local:11434`
-                // fails the suffix test (it ends in digits, not `.local`)
-                // and the host stays visible in the path.
-                let hostLike: String
-                let portSuffix: String
-                if hostPlusPort.hasPrefix("[") {
-                    if let closeBracket = hostPlusPort.firstIndex(of: "]") {
-                        let inside = String(hostPlusPort[hostPlusPort.index(after: hostPlusPort.startIndex)..<closeBracket])
-                        hostLike = "[" + inside + "]"
-                        portSuffix = String(hostPlusPort[hostPlusPort.index(after: closeBracket)...])
-                    } else {
-                        hostLike = hostPlusPort
-                        portSuffix = ""
-                    }
-                } else if let colon = hostPlusPort.lastIndex(of: ":"),
-                          hostPlusPort[hostPlusPort.index(after: colon)...].allSatisfy({ $0.isASCII && $0.isNumber }) {
-                    hostLike = String(hostPlusPort[hostPlusPort.startIndex..<colon])
-                    portSuffix = String(hostPlusPort[colon...])
-                } else {
-                    hostLike = hostPlusPort
-                    portSuffix = ""
-                }
+                // Architect-D53 #42: parse via shared `parseAuthority` instead
+                // of inlining the bracketed-IPv6 / host:port / credential
+                // split. Audit invariants D38 / D39 are now encapsulated in
+                // `renderHashedAuthority` (which uses `looksLikeHost` as the
+                // gate and re-bracketed IPv6 on render).
+                let parsed = Self.parseAuthority(rawSegments[hi])
                 let restSegments = rawSegments.dropFirst(hi + 1)
                 let rest = restSegments.isEmpty ? "" : "/" + restSegments.joined(separator: "/")
-                if Self.looksLikeHost(hostLike) {
-                    // Audit-round-D39: for bracketed IPv6, strip the
-                    // brackets before hashing so the token matches the
-                    // authority-form scrubURL path (which hashes the inner
-                    // address only). Re-add brackets on the way out.
-                    let bracketed = hostLike.hasPrefix("[") && hostLike.hasSuffix("]")
-                    let hostForHash = bracketed
-                        ? String(hostLike.dropFirst().dropLast())
-                        : hostLike
-                    let hashedInner = isHashedHost(hostForHash)
-                        ? hostForHash
-                        : "host-\(hashHost(hostForHash))"
-                    let hashed = bracketed ? "[\(hashedInner)]" : hashedInner
-                    comps.path = leadingSlashes + hashed + portSuffix + rest
-                } else if hadCredentials {
+                // Use the bracketed form for the looksLikeHost check so an
+                // IPv6 literal in brackets resolves correctly. `host` field
+                // stores unbracketed; pass that to looksLikeHost via the same
+                // shape `renderHashedAuthority` uses internally.
+                let hostForCheck = parsed.host
+                if Self.looksLikeHost(parsed.bracketedIPv6 ? "[\(hostForCheck)]" : hostForCheck) {
+                    comps.path = leadingSlashes + Self.renderHashedAuthority(parsed) + rest
+                } else if parsed.credentialsPresent {
                     // Not host-shaped, but credentials were present —
                     // overwrite the segment with the credential-stripped
                     // remainder (host + port + path) so the user:pass@
                     // doesn't leak.
-                    comps.path = leadingSlashes + hostPlusPort + rest
+                    let bareAuth = (parsed.bracketedIPv6 ? "[\(parsed.host)]" : parsed.host) + (parsed.port ?? "")
+                    comps.path = leadingSlashes + bareAuth + rest
                 }
                 // else: leave the path alone; query/fragment get stripped below.
             }

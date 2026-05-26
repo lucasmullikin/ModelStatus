@@ -67,7 +67,7 @@ struct MLXProvider: Provider {
             // heuristic as the only signal.
             if LocalProbe.isLocal(instance.url) {
                 let port = base.port ?? Self.defaultPort(base.absoluteString)
-                guard let proc = await Self.localProcessOnPort(port) else { return false }
+                guard let proc = await LocalSystemAccessProvider.current.localProcessOnPort(port) else { return false }
                 return Self.argvLooksLikeMLX(proc.args)
             }
             guard entries.contains(where: { Self.idLooksLikeMLX($0) }) else { return false }
@@ -146,12 +146,15 @@ struct MLXProvider: Provider {
             var rss: Int64 = 0
 
             if isLocal {
-                // Audit-round-D4: probe() requires a local MLX-looking process
-                // — check() must enforce the same guarantee, otherwise a local
-                // endpoint where lsof failed (no LISTEN row, permission denied,
-                // port-reuse by an unrelated server) gets reported as active
-                // MLX. Bail to offline if local process can't be confirmed.
-                guard let proc = await Self.localProcessOnPort(port),
+                // Architect-D53 #45: consume Monitor's pre-collected (pid, argv)
+                // from CheckRequest instead of running our own lsof+ps here.
+                // Drops 2 shell calls per poll.
+                //
+                // Audit-round-D4 invariant preserved: probe() requires a local
+                // MLX-looking process — check() enforces the same. Bail to
+                // offline if Monitor's collection failed or the argv doesn't
+                // identify as MLX.
+                guard let proc = request.localProcessInfo,
                       Self.argvLooksLikeMLX(proc.args) else { return offline }
                 pid = proc.pid
                 let argv = proc.args.split(whereSeparator: { $0.isWhitespace }).map(String.init)
@@ -249,7 +252,7 @@ struct MLXProvider: Provider {
         var localProcessConfirmed = false
         if isLocalEndpoint {
             let port = base.port ?? Self.defaultPort(base.absoluteString)
-            if let proc = await Self.localProcessOnPort(port),
+            if let proc = await LocalSystemAccessProvider.current.localProcessOnPort(port),
                Self.argvLooksLikeMLX(proc.args) {
                 localProcessConfirmed = true
             } else {
@@ -299,33 +302,11 @@ struct MLXProvider: Provider {
         return needles.contains { argv.contains($0) }
     }
 
-    /// Returns (pid, full-argv-string) for the local process bound to `port`, or nil.
-    /// We hit `lsof -i :PORT -n -P` to find the PID, then `ps -p PID -o args=` for argv.
-    ///
-    /// **Documented limitation** (audit-round-D27): if multiple processes
-    /// have LISTEN rows on the same port for different addresses (e.g. one
-    /// on `0.0.0.0` and another on `::1`), this returns whichever lsof
-    /// surfaces first. In practice MLX servers bind a single socket, so
-    /// the multi-listener case is rare; users with weird setups should
-    /// set the instance `kind` manually rather than relying on auto-detect.
-    static func localProcessOnPort(_ port: Int) async -> (pid: Int, args: String)? {
-        guard let lsofOut = await LocalProbe.runShell("/usr/sbin/lsof",
-                                                      args: ["-i", ":\(port)", "-n", "-P"]) else { return nil }
-        // Look specifically for a LISTEN row — that's the server, not a client connection.
-        var listenPid: Int?
-        for line in lsofOut.components(separatedBy: "\n") {
-            guard line.contains("LISTEN") else { continue }
-            let fields = line.split(whereSeparator: { $0.isWhitespace })
-            if fields.count >= 2, let p = Int(fields[1]) { listenPid = p; break }
-        }
-        guard let pid = listenPid else { return nil }
-        guard let psOut = await LocalProbe.runShell("/bin/ps", args: ["-p", String(pid), "-o", "args="]) else {
-            return nil
-        }
-        let args = psOut.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !args.isEmpty else { return nil }
-        return (pid, args)
-    }
+    /// Architect-D53 #45: `localProcessOnPort` moved to `LocalProbe` so
+    /// Monitor can hoist the collection once per poll. probe() and
+    /// availableModels() call the canonical version via
+    /// `LocalSystemAccessProvider.current` (sandboxed targets fail closed);
+    /// check() reads from `request.localProcessInfo`.
 
     /// Pull the value of `--model` (or `--model=X`) out of an argv array.
     ///
@@ -348,7 +329,7 @@ struct MLXProvider: Provider {
 
     /// RSS for a PID in bytes (ps reports KB on macOS, we multiply by 1024).
     static func rssBytes(pid: Int) async -> Int64 {
-        guard let out = await LocalProbe.runShell("/bin/ps", args: ["-p", String(pid), "-o", "rss="]) else { return 0 }
+        guard let out = await Shell.run("/bin/ps", args: ["-p", String(pid), "-o", "rss="]) else { return 0 }
         let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let kb = Int64(trimmed) else { return 0 }
         return kb * 1024

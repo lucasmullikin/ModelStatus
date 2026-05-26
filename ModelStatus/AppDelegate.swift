@@ -133,22 +133,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func startMonitoring() {
         let m = monitor
-        Task {
-            await m.startPolling(
-                onStatusChange: { statuses in
-                    Task { @MainActor in
-                        guard let d = NSApp.delegate as? AppDelegate else { return }
-                        d.currentStatuses = statuses
-                        d.statusIndicator.updateStatuses(statuses)
-                        d.rebuildMenu()
-                    }
-                },
-                onReachabilityChange: { instance, reachable in
-                    Task { @MainActor in
-                        (NSApp.delegate as? AppDelegate)?.notifyReachability(instance: instance, reachable: reachable)
-                    }
-                }
-            )
+        // Architect-D53 #43 (B): consume Monitor's AsyncStream events.
+        // The old closure-based callback delivery required a main → self →
+        // main actor hop INSIDE Monitor just to re-check generation; with
+        // AsyncStream the consumer Task owns its actor (@MainActor here)
+        // and Monitor yields synchronously from inside its own context.
+        // Two long-lived tasks — one per stream — that survive every
+        // start/stop cycle of polling.
+        Task { await m.startPolling() }
+        Task { @MainActor [weak self] in
+            for await statuses in m.statusEvents {
+                guard let self = self else { return }
+                self.currentStatuses = statuses
+                self.statusIndicator.updateStatuses(statuses)
+                self.rebuildMenu()
+            }
+        }
+        Task { @MainActor [weak self] in
+            for await (instance, reachable) in m.reachabilityEvents {
+                self?.notifyReachability(instance: instance, reachable: reachable)
+            }
         }
     }
 

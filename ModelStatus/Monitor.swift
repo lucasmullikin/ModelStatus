@@ -33,10 +33,29 @@ actor Monitor {
     /// provider check from a previous configuration can't pollute the new one.
     private var pollGeneration: UInt64 = 0
 
-    typealias StatusCallback = @Sendable ([ServerStatus]) -> Void
-    typealias ReachabilityCallback = @Sendable (Instance, Bool) -> Void
-    private var onStatusChange: StatusCallback?
-    private var onReachabilityChange: ReachabilityCallback?
+    /// Architect-D53 #43 (B): event delivery via AsyncStream instead of
+    /// closure callbacks. The previous closures-on-the-actor pattern required
+    /// `dispatchCallbacks` to do a `main → self → main` actor hop just to
+    /// re-check generation between capture and invocation — the architect
+    /// called this "fighting Swift Concurrency." With AsyncStream the
+    /// consumer Task owns the actor it runs on (AppDelegate spawns its
+    /// for-await loop on `@MainActor`), and Monitor just yields synchronously
+    /// from inside its own actor context. The generation guard now happens
+    /// once, in the same critical section as state mutation, with no
+    /// suspension between guard and yield.
+    nonisolated let statusEvents: AsyncStream<[ServerStatus]>
+    nonisolated let reachabilityEvents: AsyncStream<(Instance, Bool)>
+    private let statusContinuation: AsyncStream<[ServerStatus]>.Continuation
+    private let reachabilityContinuation: AsyncStream<(Instance, Bool)>.Continuation
+
+    init() {
+        var statusCont: AsyncStream<[ServerStatus]>.Continuation!
+        statusEvents = AsyncStream { statusCont = $0 }
+        statusContinuation = statusCont
+        var reachCont: AsyncStream<(Instance, Bool)>.Continuation!
+        reachabilityEvents = AsyncStream { reachCont = $0 }
+        reachabilityContinuation = reachCont
+    }
 
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
@@ -46,10 +65,7 @@ actor Monitor {
         return URLSession(configuration: c)
     }()
 
-    func startPolling(onStatusChange: @escaping StatusCallback,
-                      onReachabilityChange: @escaping ReachabilityCallback = { _, _ in }) {
-        self.onStatusChange = onStatusChange
-        self.onReachabilityChange = onReachabilityChange
+    func startPolling() {
         // Don't reset `state` — preserve memoized lastActive/detectedKind/etc.
         // across Settings-induced restarts. Stale entries for removed instances
         // are pruned at the top of every poll() cycle.
@@ -69,10 +85,8 @@ actor Monitor {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
-        onStatusChange = nil
-        onReachabilityChange = nil
         // Bump generation so any in-flight poll suspends-then-resumes with a
-        // stale token and refuses to emit callbacks or mutate state.
+        // stale token and refuses to yield events or mutate state.
         pollGeneration &+= 1
     }
 
@@ -122,42 +136,16 @@ actor Monitor {
             }
         }
 
-        let statusCb = self.onStatusChange
-        let reachabilityCb = self.onReachabilityChange
-        // Audit-round-D52-hard: dispatch callbacks via a Task that we own,
-        // so the generation guard happens INSIDE the same actor hop sequence
-        // as the callback invocation. The Task captures `generation` and
-        // self; once it suspends to reach MainActor, it then re-hops to
-        // `self` to verify the generation is still current — if not, it
-        // exits without firing callbacks. This closes the prior race where
-        // an `await MainActor.run` between the guard and callback dispatch
-        // could let stopPolling() bump the generation without our noticing.
-        await self.dispatchCallbacks(generation: generation,
-                                     ordered: ordered,
-                                     reachabilityEvents: reachabilityEvents,
-                                     statusCb: statusCb,
-                                     reachabilityCb: reachabilityCb)
+        // Architect-D53 #43 (B): yield to AsyncStream continuations
+        // synchronously from the actor. No actor hops between the generation
+        // guard above and these yields — the consumer (AppDelegate's
+        // for-await loop) runs on its own actor and handles MainActor hopping
+        // independently. The D52-hard dispatchCallbacks main → self → main
+        // dance is gone; the stale-callback race it fought against is
+        // eliminated by structure rather than guarded around.
+        for ev in reachabilityEvents { reachabilityContinuation.yield(ev) }
+        statusContinuation.yield(ordered)
         return ctx
-    }
-
-    /// Audit-round-D52-hard: callback dispatch with a post-MainActor
-    /// generation re-check. Two actor hops worst-case (self → main →
-    /// self → main), each sub-millisecond.
-    private func dispatchCallbacks(
-        generation: UInt64,
-        ordered: [ServerStatus],
-        reachabilityEvents: [(Instance, Bool)],
-        statusCb: StatusCallback?,
-        reachabilityCb: ReachabilityCallback?
-    ) async {
-        // Hop to main once to inherit its run loop tick, then back to self
-        // to re-check generation, then to main once more to fire.
-        await MainActor.run { _ = () }
-        guard generation == pollGeneration else { return }
-        await MainActor.run {
-            for (inst, r) in reachabilityEvents { reachabilityCb?(inst, r) }
-            statusCb?(ordered)
-        }
     }
 
     /// Audit-round-D4: takes the poll's generation token and re-checks it
@@ -180,10 +168,18 @@ actor Monitor {
         async let cpu: Double? = (isLocal && !keyword.isEmpty) ? lsa.cpuFor(processKeyword: keyword) : nil
         async let memMB: Int? = (isLocal && !keyword.isEmpty) ? lsa.memoryMBFor(processKeyword: keyword) : nil
         async let client: String? = isLocal ? lsa.clientProcess(port: port, excludeKeywords: []) : nil
+        // Architect-D53 #45: pre-collect (pid, argv) ONLY when the resolved
+        // provider declares `.needsLocalProcessArgv`. For MLX, this replaces 2
+        // shell calls (lsof + ps args=) that previously fired per-poll inside
+        // the provider itself. Other providers (Ollama / LM Studio / vLLM /
+        // OpenAI) skip the work entirely.
+        let wantsArgv = isLocal && provider.capabilities.contains(.needsLocalProcessArgv)
+        async let processInfo: LocalProcessInfo? = wantsArgv ? lsa.localProcessOnPort(port) : nil
 
         let localCPU = await cpu
         let localMem = await memMB
         let observedClient = await client
+        let observedProcessInfo = await processInfo
         guard generation == pollGeneration else {
             // Stale: don't touch state. Return a placeholder offline status.
             return ServerStatus(
@@ -203,7 +199,8 @@ actor Monitor {
             localCPU: localCPU,
             localMemMB: localMem,
             localClientProcess: clientProcess,
-            lastActive: state[instance.id]?.lastActive
+            lastActive: state[instance.id]?.lastActive,
+            localProcessInfo: observedProcessInfo
         ))
         // After the provider's own async work, generation could have moved.
         guard generation == pollGeneration else { return status }

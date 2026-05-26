@@ -349,9 +349,9 @@ enum DiagnosticBundle {
         let buildVersion = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "unknown"
         let osVer = pi.operatingSystemVersionString
 
-        let swVers = await LocalProbe.runShell("/usr/bin/sw_vers", args: []) ?? ""
-        let model = await LocalProbe.runShell("/usr/sbin/sysctl", args: ["-n", "hw.model"]) ?? ""
-        let memBytes = await LocalProbe.runShell("/usr/sbin/sysctl", args: ["-n", "hw.memsize"]) ?? ""
+        let swVers = await Shell.run("/usr/bin/sw_vers", args: []) ?? ""
+        let model = await Shell.run("/usr/sbin/sysctl", args: ["-n", "hw.model"]) ?? ""
+        let memBytes = await Shell.run("/usr/sbin/sysctl", args: ["-n", "hw.memsize"]) ?? ""
 
         var out = "ModelStatus \(appVersion) (build \(buildVersion))\n"
         out += "OS: \(osVer)\n\n"
@@ -369,7 +369,7 @@ enum DiagnosticBundle {
     ]
 
     private static func collectProcessList() async -> String {
-        guard let output = await LocalProbe.runShell("/bin/ps", args: ["-Aco", "pid,comm"]) else {
+        guard let output = await Shell.run("/bin/ps", args: ["-Aco", "pid,comm"]) else {
             return "ps unavailable\n"
         }
         // Audit-round-D29: match against the COMM column's basename only,
