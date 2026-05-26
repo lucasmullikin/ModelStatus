@@ -188,6 +188,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         menu.addItem(.separator())
 
+        // v1-prep #55: Start/Stop Local Ollama needs `brew` / `pkill` / `open`
+        // shell access, which the App Store sandbox blocks. Hide the menu item
+        // entirely in sandboxed builds — the user gets HTTP polling but not
+        // process control, which is the honest sandbox trade-off documented in
+        // the App Store description.
+        #if !MODELSTATUS_APP_STORE
         let toggle = NSMenuItem(title: "Toggle Local Ollama…", action: #selector(toggleOllama), keyEquivalent: "")
         toggle.target = self
         menu.addItem(toggle)
@@ -197,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         menu.addItem(.separator())
+        #endif
 
         let quickStart = NSMenuItem(title: "Show Quick Start…", action: #selector(showWelcome), keyEquivalent: "")
         quickStart.target = self

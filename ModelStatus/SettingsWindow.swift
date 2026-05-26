@@ -11,6 +11,10 @@ final class SettingsWindowController: NSWindowController {
     private let pollPopup = NSPopUpButton()
     private let notifyCheckbox = NSButton(checkboxWithTitle: "Notify on reachability change", target: nil, action: nil)
     private let compactCheckbox = NSButton(checkboxWithTitle: "Compact menu (one line per instance)", target: nil, action: nil)
+    /// Architect-D53 #54: SMAppService-backed "Start at login" toggle replaces
+    /// the old LaunchAgent + launchctl bootstrap workflow. Sandbox-friendly,
+    /// no external plist shipped in the .app.
+    private let startAtLoginCheckbox = NSButton(checkboxWithTitle: "Start ModelStatus at login", target: nil, action: nil)
     var onConfigChanged: (() -> Void)?
 
     init() {
@@ -116,6 +120,13 @@ final class SettingsWindowController: NSWindowController {
         compactCheckbox.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(compactCheckbox)
 
+        startAtLoginCheckbox.target = self
+        startAtLoginCheckbox.action = #selector(startAtLoginToggled)
+        startAtLoginCheckbox.state = LoginItem.isEnabled ? .on : .off
+        startAtLoginCheckbox.toolTip = "Launch ModelStatus automatically when you log in. Requires the app to be installed in /Applications."
+        startAtLoginCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(startAtLoginCheckbox)
+
         let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -182,7 +193,10 @@ final class SettingsWindowController: NSWindowController {
             compactCheckbox.topAnchor.constraint(equalTo: notifyCheckbox.bottomAnchor, constant: 8),
             compactCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
 
-            separator.topAnchor.constraint(equalTo: compactCheckbox.bottomAnchor, constant: 16),
+            startAtLoginCheckbox.topAnchor.constraint(equalTo: compactCheckbox.bottomAnchor, constant: 8),
+            startAtLoginCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+
+            separator.topAnchor.constraint(equalTo: startAtLoginCheckbox.bottomAnchor, constant: 16),
             separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
 
@@ -217,6 +231,29 @@ final class SettingsWindowController: NSWindowController {
     @objc private func compactToggled() {
         ConfigManager.shared.compactMode = (compactCheckbox.state == .on)
         onConfigChanged?()
+    }
+
+    /// Architect-D53 #54: toggle SMAppService-backed start-at-login. On
+    /// failure (most commonly "app isn't in /Applications") the UI reverts
+    /// the checkbox and surfaces a small explanation via NSAlert. No
+    /// onConfigChanged() — login-item state isn't part of ConfigManager,
+    /// the system records it.
+    @objc private func startAtLoginToggled() {
+        let desired = (startAtLoginCheckbox.state == .on)
+        let ok = LoginItem.set(desired)
+        if !ok {
+            // Revert the checkbox and explain to the user.
+            startAtLoginCheckbox.state = LoginItem.isEnabled ? .on : .off
+            let alert = NSAlert()
+            alert.messageText = desired ? "Couldn't enable Start at Login" : "Couldn't disable Start at Login"
+            alert.informativeText = LoginItem.failureHint
+            alert.alertStyle = .warning
+            if let w = self.window {
+                alert.beginSheetModal(for: w, completionHandler: nil)
+            } else {
+                alert.runModal()
+            }
+        }
     }
 
     @objc private func openGitHub() {
