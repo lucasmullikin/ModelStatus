@@ -36,9 +36,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 SWIFT_FLAGS=()
+ENTITLEMENTS_FILE="ModelStatus/ModelStatus.entitlements"
 if [[ $APP_STORE_MODE -eq 1 ]]; then
     SWIFT_FLAGS+=("-Xswiftc" "-DMODELSTATUS_APP_STORE")
-    echo "→ App Store / sandboxed build (MODELSTATUS_APP_STORE=1)"
+    ENTITLEMENTS_FILE="ModelStatus/ModelStatus-AppStore.entitlements"
+    echo "→ App Store / sandboxed build (MODELSTATUS_APP_STORE=1, entitlements=$ENTITLEMENTS_FILE)"
 fi
 
 echo "→ swift build -c $CONFIG ${SWIFT_FLAGS[*]:-}"
@@ -56,9 +58,9 @@ cp "ModelStatus/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 if [[ -n "$SIGN_IDENTITY" ]]; then
-    echo "→ codesign with: $SIGN_IDENTITY"
+    echo "→ codesign with: $SIGN_IDENTITY (entitlements: $ENTITLEMENTS_FILE)"
     codesign --deep --force --options runtime \
-        --entitlements ModelStatus/ModelStatus.entitlements \
+        --entitlements "$ENTITLEMENTS_FILE" \
         --sign "$SIGN_IDENTITY" \
         "$APP"
 fi

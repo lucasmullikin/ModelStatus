@@ -156,10 +156,30 @@ enum LocalSystemAccessProvider {
     /// constructing `Monitor`. Audit-round-D46: configure() AFTER first read
     /// is rejected — switching access kind mid-flight would create
     /// inconsistent behavior across early and later polls.
+    ///
+    /// Codex-v1gate fix: under `#if MODELSTATUS_APP_STORE`, this method
+    /// REJECTS any non-`SandboxedLocalSystemAccess` provider. The earlier
+    /// version accepted any `LocalSystemAccess`-conforming type — a future
+    /// code path could have tricked the sandboxed binary into running
+    /// `DirectLocalSystemAccess`, which would attempt `Process` / `lsof` /
+    /// `ps` calls that the sandbox would deny at runtime (some macOS
+    /// versions crash on EPERM in `posix_spawn`; others silently fail).
+    /// Compile-time enforcement is the right boundary here.
     @discardableResult
     static func configure(_ provider: LocalSystemAccess) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !_configured, !_accessed else { return false }
+        #if MODELSTATUS_APP_STORE
+        // Under the App Store / sandboxed target, only the sandboxed
+        // implementation is acceptable. Reject Direct (which would attempt
+        // Process exec under sandbox) at this trust boundary.
+        guard provider is SandboxedLocalSystemAccess else {
+            localSystemAccessLogger.fault(
+                "Refused LocalSystemAccessProvider.configure() under MODELSTATUS_APP_STORE — only SandboxedLocalSystemAccess is acceptable in the sandboxed target."
+            )
+            return false
+        }
+        #endif
         _current = provider
         _configured = true
         return true

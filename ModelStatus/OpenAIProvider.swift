@@ -58,7 +58,11 @@ struct OpenAIProvider: Provider {
                 // connected to. Audit-round-D7: the previous version fell back
                 // to defaultPortGuess (8080) for port-less URLs, which mismatched
                 // what http://localhost actually hit (port 80).
-                let busy = await LocalProbe.establishedConnectionPresent(
+                //
+                // Architect-D54 critical fix: route through LSA so the
+                // sandboxed build returns false silently rather than spawning
+                // lsof which the App Store sandbox denies.
+                let busy = await LocalSystemAccessProvider.current.establishedConnectionPresent(
                     port: Self.effectivePort(for: base),
                     excludingPids: [selfPid])
                 state = models.isEmpty ? .idle : (busy ? .generating : .active)

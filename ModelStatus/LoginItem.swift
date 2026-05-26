@@ -34,15 +34,29 @@ enum LoginItem {
     /// don't mirror it in UserDefaults because the system can disable it for
     /// us (e.g., user toggled it off in System Settings → General → Login
     /// Items) and we'd present a stale state.
+    ///
+    /// Codex-v1gate fix: `.requiresApproval` is treated as ENABLED here.
+    /// The user has registered the login item, but the system is waiting on
+    /// them to approve it in System Settings. The checkbox in Settings should
+    /// reflect "you've asked for it" — toggling off would unregister. The
+    /// failure hint copy tells them where to go to approve.
     static var isEnabled: Bool {
-        SMAppService.mainApp.status == .enabled
+        let s = SMAppService.mainApp.status
+        return s == .enabled || s == .requiresApproval
     }
 
     /// Toggle the login item to `enabled`. Returns true on success.
     /// Returns false (and logs the error) if registration fails — usually
     /// because the app isn't in `/Applications` yet.
+    ///
+    /// Codex-v1gate fix: short-circuit when already enabled/requiresApproval
+    /// so repeated toggles don't fire avoidable SMAppService errors. Errors
+    /// from re-registering an already-registered service are idempotent on
+    /// Apple's side but show up as log noise.
     @discardableResult
     static func enable() -> Bool {
+        let s = SMAppService.mainApp.status
+        if s == .enabled || s == .requiresApproval { return true }
         do {
             try SMAppService.mainApp.register()
             logger.info("login item registered")
@@ -56,6 +70,7 @@ enum LoginItem {
     /// Toggle the login item to `disabled`. Returns true on success.
     @discardableResult
     static func disable() -> Bool {
+        if SMAppService.mainApp.status == .notRegistered { return true }
         do {
             try SMAppService.mainApp.unregister()
             logger.info("login item unregistered")

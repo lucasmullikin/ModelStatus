@@ -131,16 +131,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NotificationCenter.default.removeObserver(self)
     }
 
+    /// Architect-D54 / Codex-v1gate fix: the AsyncStream consumer Tasks are
+    /// long-lived and outlive start/stop cycles. They must be created EXACTLY
+    /// ONCE per AppDelegate lifetime — startMonitoring() is called both at
+    /// applicationDidFinishLaunching AND every config change in openSettings,
+    /// so without this guard each settings change would spawn a duplicate
+    /// for-await loop. Duplicate consumers compete for the same AsyncStream
+    /// events (AsyncStream iteration is competitive, not broadcast), causing
+    /// rebuildMenu() to fire 2x and reachability notifications to duplicate.
+    private var streamConsumersStarted = false
+
     private func startMonitoring() {
         let m = monitor
-        // Architect-D53 #43 (B): consume Monitor's AsyncStream events.
-        // The old closure-based callback delivery required a main → self →
-        // main actor hop INSIDE Monitor just to re-check generation; with
-        // AsyncStream the consumer Task owns its actor (@MainActor here)
-        // and Monitor yields synchronously from inside its own context.
-        // Two long-lived tasks — one per stream — that survive every
-        // start/stop cycle of polling.
+        // Always (re)start polling — stopPolling() bumps pollGeneration; this
+        // restart bumps it again and spawns a fresh poll task.
         Task { await m.startPolling() }
+        // Consumer tasks are created exactly once. Monitor's AsyncStreams are
+        // backed by continuations stored in `private let` on the actor —
+        // they survive every stop/start cycle (Monitor doesn't deinit), so
+        // the consumer Task stays connected across config changes.
+        guard !streamConsumersStarted else { return }
+        streamConsumersStarted = true
         Task { @MainActor [weak self] in
             for await statuses in m.statusEvents {
                 guard let self = self else { return }
@@ -217,9 +228,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let showLog = NSMenuItem(title: "Show Log Viewer…", action: #selector(showLogViewer), keyEquivalent: "")
         showLog.target = self
         diagMenu.addItem(showLog)
+        // Architect-D54 critical fix: hide Export Diagnostic Bundle in the
+        // App Store sandboxed build. The bundle uses Shell.run for sw_vers /
+        // sysctl / ps + a raw /usr/bin/zip exec — none of which are allowed
+        // under the sandbox. Rather than migrating to AppleArchive +
+        // sysctlbyname API (a v1.1 effort), gate the feature off entirely
+        // for v1.0 App Store and keep it in the direct-download build where
+        // it works correctly.
+        #if !MODELSTATUS_APP_STORE
         let exportBundle = NSMenuItem(title: "Export Diagnostic Bundle…", action: #selector(exportDiagnosticBundle), keyEquivalent: "")
         exportBundle.target = self
         diagMenu.addItem(exportBundle)
+        #endif
         diagItem.submenu = diagMenu
         menu.addItem(diagItem)
 

@@ -65,14 +65,18 @@ struct OllamaProvider: Provider {
                 }
                 var busy = false
                 if request.isLocal {
+                    // Architect-D54 critical fix: route through LSA so the
+                    // sandboxed build silently degrades (returns false) rather
+                    // than attempting `Process` calls the sandbox would deny.
+                    let lsa = LocalSystemAccessProvider.current
                     let port = base.port ?? 11434
-                    let ollamaPids = await LocalProbe.pidsFor(processName: "ollama")
+                    let ollamaPids = await lsa.pidsFor(processName: "ollama")
                     // Audit-round-D36: exclude our OWN PID too so URLSession's
                     // keep-alive polling connection isn't counted as
                     // generation traffic and falsely flips state to
                     // .generating on every poll.
                     let selfPid = Int(ProcessInfo.processInfo.processIdentifier)
-                    busy = await LocalProbe.establishedConnectionPresent(
+                    busy = await lsa.establishedConnectionPresent(
                         port: port,
                         excludingPids: ollamaPids.union([selfPid])
                     )

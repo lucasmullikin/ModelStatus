@@ -150,17 +150,39 @@ struct MLXProvider: Provider {
                 // from CheckRequest instead of running our own lsof+ps here.
                 // Drops 2 shell calls per poll.
                 //
-                // Audit-round-D4 invariant preserved: probe() requires a local
-                // MLX-looking process — check() enforces the same. Bail to
-                // offline if Monitor's collection failed or the argv doesn't
-                // identify as MLX.
-                guard let proc = request.localProcessInfo,
-                      Self.argvLooksLikeMLX(proc.args) else { return offline }
-                pid = proc.pid
-                let argv = proc.args.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-                loadedName = Self.extractModelArg(from: argv)
-                rss = await Self.rssBytes(pid: proc.pid)
-                log.debug("MLX local pid=\(proc.pid, privacy: .public) model=\(loadedName ?? "<none>", privacy: .public) rss=\(rss)")
+                // Architect-D54 critical fix: when `localProcessInfo` is nil
+                // AND HTTP responded successfully, FALL BACK TO HTTP-ONLY
+                // signals rather than bailing to offline. Under the App Store
+                // sandbox, SandboxedLocalSystemAccess.localProcessOnPort
+                // always returns nil — without this fallback, a sandboxed
+                // user running a real local MLX server would see
+                // "Unreachable" even though HTTP polling worked. That's a
+                // 1-star review pattern for a paid product.
+                //
+                // The D4 invariant ("local MLX must be confirmed by argv")
+                // still holds for the DIRECT-download build (where
+                // localProcessInfo is populated and argv is checked). The
+                // sandboxed build trades MLX-vs-llama.cpp disambiguation
+                // strictness for graceful degradation — documented in the
+                // App Store description.
+                if let proc = request.localProcessInfo, Self.argvLooksLikeMLX(proc.args) {
+                    pid = proc.pid
+                    let argv = proc.args.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+                    loadedName = Self.extractModelArg(from: argv)
+                    rss = await Self.rssBytes(pid: proc.pid)
+                    log.debug("MLX local pid=\(proc.pid, privacy: .public) model=\(loadedName ?? "<none>", privacy: .public) rss=\(rss)")
+                } else if request.localProcessInfo == nil {
+                    // Sandbox path: no process inspection available. Trust
+                    // the HTTP shape gate (already passed: 200 + MLX-shaped
+                    // IDs above). pid stays nil; rss stays 0; loadedName
+                    // falls back to entries[0] below.
+                    log.debug("MLX local HTTP-only (sandbox): no process inspection")
+                } else {
+                    // localProcessInfo IS populated but argv doesn't look
+                    // like MLX — that's a non-MLX local server on the port.
+                    // D4 invariant: bail.
+                    return offline
+                }
             }
             // Pick the first MLX-shaped entry as the loaded model when argv
             // didn't surface one. Audit-round-D2: a mixed `/v1/models` response
@@ -188,12 +210,15 @@ struct MLXProvider: Provider {
             // State machine: idle if nothing resident; generating if we see an
             // ESTABLISHED TCP peer AND the process is actually burning cycles;
             // active otherwise.
+            //
+            // Architect-D54 critical fix: route LSA so sandbox builds return
+            // false silently rather than spawning lsof.
             let state: ServerState
             if loaded.isEmpty {
                 state = .idle
             } else if isLocal,
                       let p = pid,
-                      await LocalProbe.establishedConnectionPresent(port: port, excludingPids: [p]),
+                      await LocalSystemAccessProvider.current.establishedConnectionPresent(port: port, excludingPids: [p]),
                       (localCPU ?? 0) > 20 {
                 state = .generating
             } else {

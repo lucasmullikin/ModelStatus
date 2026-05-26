@@ -390,11 +390,26 @@ enum Anonymizer {
             hadCreds = true
         }
         // Bracketed IPv6 authority: `[fd00::1]:8080` or `[fd00::1]`.
+        // Architect-D54 / Codex-v1gate fix: only accept ":<digits>" as port
+        // suffix — previously any tail (e.g. `[fd00::1]evil`) was preserved
+        // as a port-like suffix and survived the scrub. Now anything after
+        // `]` that isn't a strict port is silently dropped (the caller's
+        // looksLikeHost gate already rejects this shape from being hashed).
         if working.hasPrefix("[") {
             if let closeBracket = working.firstIndex(of: "]") {
                 let inside = String(working[working.index(after: working.startIndex)..<closeBracket])
-                let tail = working[working.index(after: closeBracket)...]
-                let port: String? = tail.isEmpty ? nil : String(tail)
+                let tail = String(working[working.index(after: closeBracket)...])
+                let port: String?
+                if tail.isEmpty {
+                    port = nil
+                } else if tail.hasPrefix(":") && tail.dropFirst().allSatisfy({ $0.isASCII && $0.isNumber }) && tail.count > 1 {
+                    port = tail
+                } else {
+                    // Junk tail after `]` — discard; the bracketed inner
+                    // address is still recognized as the host (or rejected
+                    // by looksLikeHost downstream).
+                    port = nil
+                }
                 return ParsedAuthority(credentialsPresent: hadCreds,
                                        host: inside,
                                        bracketedIPv6: true,
@@ -407,10 +422,24 @@ enum Anonymizer {
                                    bracketedIPv6: false,
                                    port: nil)
         }
-        // `host:port` — last `:` followed entirely by digits.
+        // Codex-v1gate fix: unbracketed IPv6 literals like `fe80::1` were
+        // mis-parsed as host=`fe80:` port=`:1` because the last-colon-followed-
+        // by-digits rule fired. Detect IPv6 by counting `:` — IPv6 literals
+        // have ≥ 2 colons; valid `host:port` has exactly 1 colon (or 0 if no
+        // port). If we see >1 colon in unbracketed input, the whole thing IS
+        // the IPv6 host with no port.
+        let colonCount = working.filter { $0 == ":" }.count
+        if colonCount > 1 {
+            return ParsedAuthority(credentialsPresent: hadCreds,
+                                   host: working,
+                                   bracketedIPv6: false,
+                                   port: nil)
+        }
+        // `host:port` — single `:` followed entirely by digits.
         if let colon = working.lastIndex(of: ":"),
            working.index(after: colon) <= working.endIndex,
-           working[working.index(after: colon)...].allSatisfy({ $0.isASCII && $0.isNumber }) {
+           working[working.index(after: colon)...].allSatisfy({ $0.isASCII && $0.isNumber }),
+           working.index(after: colon) != working.endIndex {  // not a trailing bare `:`
             let host = String(working[working.startIndex..<colon])
             let port = String(working[colon...])
             return ParsedAuthority(credentialsPresent: hadCreds,

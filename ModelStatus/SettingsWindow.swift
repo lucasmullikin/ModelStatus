@@ -137,7 +137,13 @@ final class SettingsWindowController: NSWindowController {
         aboutLabel.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(aboutLabel)
 
-        let authorLabel = NSTextField(labelWithString: "Lucrative Pictures LLC · MIT License")
+        // Architect-D54 P2 fix: "Lucrative Pictures LLC" matches the BRAND
+        // but the Mac App Store seller line under Individual enrollment will
+        // show "Lucas Mullikin" (the legal name on the Developer account).
+        // To pre-empt the App Review IP-mismatch flag under Guideline 5.2.1
+        // AND to be honest with users about who's behind the binary, list
+        // both: brand · author · license.
+        let authorLabel = NSTextField(labelWithString: "Lucrative Pictures LLC · Lucas Mullikin · MIT-licensed source")
         authorLabel.font = NSFont.systemFont(ofSize: 11)
         authorLabel.textColor = .secondaryLabelColor
         authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -272,6 +278,12 @@ final class SettingsWindowController: NSWindowController {
         pollPopup.selectItem(at: PollInterval.allCases.firstIndex(of: PollInterval.closest(to: ConfigManager.shared.pollInterval)) ?? 1)
         notifyCheckbox.state = ConfigManager.shared.notifyOnStateChange ? .on : .off
         compactCheckbox.state = ConfigManager.shared.compactMode ? .on : .off
+        // Codex-v1gate fix: refresh the login-item checkbox on every
+        // Settings open. SMAppService state can change outside this window
+        // (user toggled it off in System Settings → General → Login Items,
+        // or another instance of the app registered/unregistered) — without
+        // this refresh the checkbox would show stale state on re-open.
+        startAtLoginCheckbox.state = LoginItem.isEnabled ? .on : .off
     }
 
     @objc private func tableDoubleClick() {
@@ -419,7 +431,17 @@ final class SettingsWindowController: NSWindowController {
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            Keychain.setAuthHeader(value.isEmpty ? nil : value, for: inst.id)
+            // Codex-v1gate fix: check Keychain write return — silent failure
+            // here would let the user think their header was saved when it
+            // wasn't. Surface the failure inline rather than ghost-saving.
+            let ok = Keychain.setAuthHeader(value.isEmpty ? nil : value, for: inst.id)
+            if !ok, let self = self {
+                let warn = NSAlert()
+                warn.messageText = "Couldn't save Authorization header"
+                warn.informativeText = "The macOS Keychain rejected the write. Check Console.app under com.lucrativepictures.ModelStatus for the underlying OSStatus."
+                warn.alertStyle = .warning
+                if let w = self.window { warn.beginSheetModal(for: w, completionHandler: nil) }
+            }
             self?.loadInstances()
             self?.onConfigChanged?()
         }
