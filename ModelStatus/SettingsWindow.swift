@@ -276,10 +276,25 @@ final class SettingsWindowController: NSWindowController {
     @objc private func addInstance() {
         presentInstanceSheet(name: nil, url: nil, kind: .auto) { [weak self] name, url, kind, auth in
             guard let self else { return }
-            ConfigManager.shared.addInstance(name: name, url: url, kind: kind, authHeader: auth)
+            // Surface Keychain write failures so the user knows their auth
+            // header wasn't actually stored — addInstance returns nil in that
+            // case and the instance is NOT persisted.
+            if ConfigManager.shared.addInstance(name: name, url: url, kind: kind, authHeader: auth) == nil {
+                self.presentKeychainFailureAlert(instanceName: name)
+                return
+            }
             self.loadInstances()
             self.onConfigChanged?()
         }
+    }
+
+    private func presentKeychainFailureAlert(instanceName: String) {
+        guard let window = self.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Couldn't save credentials for “\(instanceName)”"
+        alert.informativeText = "The Keychain refused the write — possibly because it's locked or this build lacks the right entitlement. The instance was not added. Try again after unlocking your Keychain, or add it without an Authorization header."
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     @objc private func discover() {

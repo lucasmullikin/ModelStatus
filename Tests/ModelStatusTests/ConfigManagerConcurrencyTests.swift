@@ -67,11 +67,19 @@ final class ConfigManagerConcurrencyTests: XCTestCase {
     }
 
     func testSnapshotForPollCapturesAllFields() async throws {
-        let ctx = await MainActor.run { ConfigManager.shared.snapshotForPoll() }
-        // Sanity: snapshot captures current values for every field PollContext exposes.
-        XCTAssertEqual(ctx.pollInterval, await MainActor.run { ConfigManager.shared.pollInterval })
-        XCTAssertEqual(ctx.verbose, await MainActor.run { ConfigManager.shared.verboseLogging })
-        XCTAssertEqual(ctx.instances.count, await MainActor.run { ConfigManager.shared.instances.count })
+        // Read snapshot + ground-truth values in a single MainActor hop so the
+        // two reads can't drift between contexts.
+        let (ctx, pi, vb, ic) = await MainActor.run {
+            (
+                ConfigManager.shared.snapshotForPoll(),
+                ConfigManager.shared.pollInterval,
+                ConfigManager.shared.verboseLogging,
+                ConfigManager.shared.instances.count
+            )
+        }
+        XCTAssertEqual(ctx.pollInterval, pi)
+        XCTAssertEqual(ctx.verbose, vb)
+        XCTAssertEqual(ctx.instances.count, ic)
         // timestamp is "now-ish" — within last second
         XCTAssertLessThan(Date().timeIntervalSince(ctx.timestamp), 1.0)
     }

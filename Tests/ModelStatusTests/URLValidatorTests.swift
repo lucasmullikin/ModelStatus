@@ -83,4 +83,51 @@ final class URLValidatorTests: XCTestCase {
         case .failure: XCTFail("whitespace should be trimmed")
         }
     }
+
+    // MARK: - Host:port shorthand (audit-round-D2)
+
+    /// `localhost:11434` is the most common user-typed Ollama endpoint. It must
+    /// be treated as host:port shorthand, NOT as scheme `localhost:`.
+    func testAcceptsLocalhostPortShorthand() {
+        switch URLValidator.validate("localhost:11434") {
+        case .success(let s): XCTAssertEqual(s, "http://localhost:11434")
+        case .failure: XCTFail("localhost:port must be accepted as host:port shorthand")
+        }
+    }
+
+    /// Hostname-with-port shorthand (`my-server:8000`) for self-hosted endpoints.
+    func testAcceptsHostnamePortShorthand() {
+        switch URLValidator.validate("my-server:8000") {
+        case .success(let s): XCTAssertEqual(s, "http://my-server:8000")
+        case .failure: XCTFail("hostname:port must be accepted as host:port shorthand")
+        }
+    }
+
+    // MARK: - IPv4 metadata canonicalization (audit-round-D2)
+
+    /// The AWS/Azure IMDS address as a single 32-bit decimal: 169<<24 | 254<<16 | 169<<8 | 254
+    func testRejectsAWSMetadataDecimalNumeric() {
+        if case .success = URLValidator.validate("http://2852039166/") {
+            XCTFail("decimal-numeric form of 169.254.169.254 must be rejected")
+        }
+    }
+
+    func testRejectsAWSMetadataHexPerOctet() {
+        if case .success = URLValidator.validate("http://0xa9.0xfe.0xa9.0xfe/") {
+            XCTFail("hex-per-octet form of 169.254.169.254 must be rejected")
+        }
+    }
+
+    func testRejectsAWSMetadataOctalPerOctet() {
+        if case .success = URLValidator.validate("http://0251.0376.0251.0376/") {
+            XCTFail("octal-per-octet form of 169.254.169.254 must be rejected")
+        }
+    }
+
+    /// IPv6 compressed equivalent of the AWS metadata address.
+    func testRejectsAWSMetadataIPv6Compressed() {
+        if case .success = URLValidator.validate("http://[fd00:ec2:0:0:0:0:0:254]/") {
+            XCTFail("uncompressed IPv6 form of fd00:ec2::254 must be rejected")
+        }
+    }
 }

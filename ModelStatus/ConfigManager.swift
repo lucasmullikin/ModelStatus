@@ -1,4 +1,8 @@
 import Foundation
+import Darwin
+import OSLog
+
+private let cfgLogger = Logger(subsystem: "com.lucrativepictures.ModelStatus", category: "config")
 
 enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case auto      // Auto-detect on first probe
@@ -6,6 +10,7 @@ enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case openAI    // Generic OpenAI-compatible (/v1/models)
     case lmStudio  // LM Studio (/api/v0/models, supports unload)
     case vllm      // vLLM (adds /metrics for telemetry)
+    case mlx       // mlx_lm.server / mlx-omni-server (single-model, read-only)
 
     var displayName: String {
         switch self {
@@ -14,6 +19,7 @@ enum ProviderKind: String, Codable, CaseIterable, Sendable {
         case .openAI:   return "OpenAI-compatible"
         case .lmStudio: return "LM Studio"
         case .vllm:     return "vLLM"
+        case .mlx:      return "MLX"
         }
     }
 }
@@ -128,34 +134,62 @@ final class ConfigManager {
     private let configURL: URL
     private var _config: AppConfig
 
+    /// Audit-round-D39: property setters now roll back to the previous
+    /// value if `save()` fails, so in-memory state never diverges from
+    /// what's on disk. Callers that care about success can use the
+    /// explicit `set*` methods below.
     var config: AppConfig {
         get { _config }
-        set { _config = newValue; save() }
+        set {
+            let snapshot = _config
+            _config = newValue
+            if !save() { _config = snapshot }
+        }
     }
 
     var instances: [Instance] {
         get { _config.instances }
-        set { _config.instances = newValue; save() }
+        set {
+            let snapshot = _config.instances
+            _config.instances = newValue
+            if !save() { _config.instances = snapshot }
+        }
     }
 
     var pollInterval: TimeInterval {
         get { _config.pollInterval }
-        set { _config.pollInterval = newValue; save() }
+        set {
+            let snapshot = _config.pollInterval
+            _config.pollInterval = newValue
+            if !save() { _config.pollInterval = snapshot }
+        }
     }
 
     var notifyOnStateChange: Bool {
         get { _config.notifyOnStateChange }
-        set { _config.notifyOnStateChange = newValue; save() }
+        set {
+            let snapshot = _config.notifyOnStateChange
+            _config.notifyOnStateChange = newValue
+            if !save() { _config.notifyOnStateChange = snapshot }
+        }
     }
 
     var compactMode: Bool {
         get { _config.compactMode }
-        set { _config.compactMode = newValue; save() }
+        set {
+            let snapshot = _config.compactMode
+            _config.compactMode = newValue
+            if !save() { _config.compactMode = snapshot }
+        }
     }
 
     var verboseLogging: Bool {
         get { _config.verboseLogging }
-        set { _config.verboseLogging = newValue; save() }
+        set {
+            let snapshot = _config.verboseLogging
+            _config.verboseLogging = newValue
+            if !save() { _config.verboseLogging = snapshot }
+        }
     }
 
     /// Snapshot reader used by `Monitor.poll()` to capture config in a single hop.
@@ -196,48 +230,130 @@ final class ConfigManager {
         return try? JSONDecoder().decode(AppConfig.self, from: data)
     }
 
-    private func save() {
+    /// Audit-round-D37: returns Bool so mutating callers can roll back
+    /// on persistence failure (specifically: undo a Keychain write if the
+    /// config save fails, so the credential and the config-instance-list
+    /// stay in sync).
+    @discardableResult
+    private func save() -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(_config) else { return }
-        try? data.write(to: configURL, options: [.atomic, .completeFileProtection])
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        let data: Data
+        do {
+            data = try encoder.encode(_config)
+        } catch {
+            cfgLogger.error("config encode failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        do {
+            try data.write(to: configURL, options: [.atomic, .completeFileProtection])
+        } catch {
+            cfgLogger.error("config write failed at \(self.configURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        do {
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        } catch {
+            // chmod failure isn't fatal — Class A protection already in place.
+            cfgLogger.notice("config chmod 0600 failed: \(error.localizedDescription, privacy: .public)")
+        }
+        return true
     }
 
+    /// Persist the Keychain header BEFORE the config snapshot, and ONLY persist
+    /// the instance when the Keychain write actually landed. Audit-round-3
+    /// finding: a returned-true Keychain check stops a "credentials never
+    /// stored but config thinks they were" failure mode (locked keychain,
+    /// sandbox container without entitlement, etc.). Returns nil when the
+    /// auth header was supplied but couldn't be saved.
     @discardableResult
-    func addInstance(name: String, url: String, kind: ProviderKind = .auto, authHeader: String? = nil) -> Instance {
+    func addInstance(name: String, url: String, kind: ProviderKind = .auto, authHeader: String? = nil) -> Instance? {
         let inst = Instance(name: name, url: url, kind: kind)
+        // Trim before the empty check so whitespace-only headers aren't stored.
+        let trimmed = authHeader?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasCredentials = (trimmed?.isEmpty == false)
+        if let trimmed, hasCredentials {
+            guard Keychain.setAuthHeader(trimmed, for: inst.id) else {
+                cfgLogger.error("addInstance: refusing to save instance \(name, privacy: .public) — Keychain write for auth header failed")
+                return nil
+            }
+        }
         _config.instances.append(inst)
-        save()
-        if let authHeader, !authHeader.isEmpty {
-            Keychain.setAuthHeader(authHeader, for: inst.id)
+        // Audit-round-D37+D39: if config save fails AFTER a successful Keychain
+        // write, undo the Keychain write. Surface a Keychain-cleanup failure
+        // explicitly rather than ignoring its return — an orphaned credential
+        // for an instance that was never persisted is exactly the failure
+        // mode the rollback is trying to prevent.
+        if !save() {
+            _config.instances.removeAll(where: { $0.id == inst.id })
+            if hasCredentials {
+                if !Keychain.setAuthHeader(nil, for: inst.id) {
+                    cfgLogger.error("addInstance rollback: also failed to delete orphaned Keychain credential for \(name, privacy: .public)")
+                }
+            }
+            cfgLogger.error("addInstance: rolled back \(name, privacy: .public) — config persistence failed")
+            return nil
         }
         return inst
     }
 
+    /// Audit-round-D38: transactional removal — save the config FIRST, only
+    /// delete the Keychain credential after persistence succeeds. Roll back
+    /// the in-memory removal on save failure so a transient disk-write error
+    /// can't leave the user with a permanently-decredentialed instance.
     func removeInstance(at index: Int) {
         guard index >= 0 && index < _config.instances.count else { return }
-        let id = _config.instances[index].id
+        let removed = _config.instances[index]
         _config.instances.remove(at: index)
-        Keychain.setAuthHeader(nil, for: id)
-        save()
+        if !save() {
+            _config.instances.insert(removed, at: index)
+            cfgLogger.error("removeInstance(at:): rolled back — config persistence failed")
+            return
+        }
+        if !Keychain.setAuthHeader(nil, for: removed.id) {
+            cfgLogger.error("removeInstance(at:): config saved but Keychain credential delete failed for instance \(removed.name, privacy: .public)")
+        }
     }
 
     func removeInstance(id: UUID) {
+        guard let removed = _config.instances.first(where: { $0.id == id }) else { return }
+        let snapshot = _config.instances
         _config.instances.removeAll { $0.id == id }
-        Keychain.setAuthHeader(nil, for: id)
-        save()
+        if !save() {
+            _config.instances = snapshot
+            cfgLogger.error("removeInstance(id:): rolled back — config persistence failed")
+            return
+        }
+        if !Keychain.setAuthHeader(nil, for: removed.id) {
+            cfgLogger.error("removeInstance(id:): config saved but Keychain credential delete failed for instance \(removed.name, privacy: .public)")
+        }
     }
 
     func updateInstance(id: UUID, name: String? = nil, url: String? = nil, kind: ProviderKind? = nil) {
         guard let i = _config.instances.firstIndex(where: { $0.id == id }) else { return }
+        let snapshot = _config.instances[i]
         if let name { _config.instances[i].name = name }
         if let url { _config.instances[i].url = url }
         if let kind { _config.instances[i].kind = kind }
-        save()
+        if !save() {
+            _config.instances[i] = snapshot
+            cfgLogger.error("updateInstance: rolled back — config persistence failed")
+        }
     }
 }
 
+/// SYNTACTIC URL validation. Catches obvious misconfigurations + a curated set
+/// of cloud-metadata endpoints with full IPv4 canonicalization (decimal/octal/
+/// hex/shortened forms all fold to the same numeric blocklist check).
+///
+/// **Not a full SSRF defense**: a hostname that resolves to a blocked IP at
+/// connect time is not detected HERE. Runtime defense lives in
+/// `HTTPHelpers.get` / `HTTPHelpers.post`, both of which invoke
+/// `DNSResolutionGuard.resolvesToBlockedAddress` immediately before the
+/// outbound request. The two layers together cover: (a) literal-IP misconfig
+/// (URLValidator) and (b) hostname → blocked-IP rebinding (DNSResolutionGuard).
+/// Audit-round-D23: layering documented explicitly so callers don't mistake
+/// URLValidator as the only SSRF gate.
 enum URLValidator {
     enum Issue: Error, LocalizedError {
         case invalid, unsupportedScheme, missingHost, suspiciousHost
@@ -252,25 +368,51 @@ enum URLValidator {
     }
 
     private static let schemeRegex = try! NSRegularExpression(pattern: "^[A-Za-z][A-Za-z0-9+.-]*:")
+    // Host:port shorthand — `letters/digits/.-` followed by `:digits`. Audit-round-D2:
+    // detected before the scheme regex so `localhost:11434` is treated as a
+    // host and gets `http://` prepended, while `mailto:user@x` still falls
+    // through to the scheme-allowlist rejection path.
+    private static let hostPortShorthandRegex = try! NSRegularExpression(
+        pattern: #"^[A-Za-z0-9][A-Za-z0-9.\-]*:\d+(?:/|$)"#)
 
-    /// Canonical form of well-known cloud-metadata hosts. Strip trailing dot, lowercase,
-    /// fold IPv4 variants. This is intentionally not exhaustive — link-local IP-range
-    /// blocking belongs at request time, not config time.
-    private static let blockedHosts: Set<String> = [
-        "169.254.169.254",
-        "fd00:ec2::254",
+    /// Hostnames blocked at config-validation time. IPv4 is handled separately via
+    /// `inet_aton` canonicalization so decimal/octal/hex/shortened forms can't slip past.
+    /// `internal` so `DNSResolutionGuard` can reuse it at request time.
+    static let blockedHostnames: Set<String> = [
         "metadata.google.internal",
         "metadata"               // GCP shortcut
+    ]
+
+    /// Network-order numeric form of cloud-metadata IPv4 endpoints to block.
+    /// `inet_aton` accepts every alternate textual encoding (`2852039166`,
+    /// `0xa9.0xfe.0xa9.0xfe`, `0251.0376.0251.0376`, etc.) and folds them all to
+    /// the same `in_addr.s_addr`, so we compare numerically. `fileprivate` so
+    /// the public `blockedIPv4Numerics` re-export controls external access.
+    fileprivate static let blockedIPv4Numeric: Set<UInt32> = [
+        0xA9FEA9FE       // 169.254.169.254 — AWS / Azure / GCP IMDS
+    ]
+
+    /// IPv6 metadata endpoints. Compared after `inet_pton`/`inet_ntop` round-trip
+    /// so "[fd00:ec2::254]" and "[fd00:ec2:0:0:0:0:0:254]" both normalize to the
+    /// same canonical form.
+    fileprivate static let blockedIPv6Canonical: Set<String> = [
+        "fd00:ec2::254"
     ]
 
     static func validate(_ raw: String) -> Result<String, Issue> {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return .failure(.invalid) }
-        // Detect an explicit scheme via RFC-style regex. Only prepend http:// when there's
-        // truly no scheme — otherwise pass the user's input through so file:/, ftp:/,
-        // javascript:, mailto: etc. get rejected at the scheme allowlist below.
+        // Two-step scheme detection (audit-round-D2):
+        //  1. If the input looks like host:port shorthand (`localhost:11434`),
+        //     prepend `http://` so it parses as a normal HTTP URL.
+        //  2. Otherwise, if it has an explicit scheme (`mailto:`, `file:/`,
+        //     `ftp://`, `javascript:` …) leave it alone — the allowlist below
+        //     will reject anything other than http/https.
+        //  3. Otherwise (bare hostname / IP), prepend `http://`.
         let range = NSRange(s.startIndex..., in: s)
-        if schemeRegex.firstMatch(in: s, range: range) == nil {
+        if hostPortShorthandRegex.firstMatch(in: s, range: range) != nil {
+            s = "http://" + s
+        } else if schemeRegex.firstMatch(in: s, range: range) == nil {
             s = "http://" + s
         }
         guard let url = URL(string: s), let scheme = url.scheme?.lowercased() else {
@@ -281,7 +423,116 @@ enum URLValidator {
         // Canonicalize: lowercase, strip trailing dot.
         var host = rawHost.lowercased()
         if host.hasSuffix(".") { host.removeLast() }
-        if blockedHosts.contains(host) { return .failure(.suspiciousHost) }
+        if blockedHostnames.contains(host) { return .failure(.suspiciousHost) }
+        // IPv4 canonicalization catches every textual representation of a blocked address.
+        if let numeric = canonicalIPv4Numeric(host),
+           blockedIPv4Numeric.contains(numeric) { return .failure(.suspiciousHost) }
+        // IPv6 canonicalization handles ::-compression + uppercase variants.
+        if let canon = canonicalIPv6(host),
+           blockedIPv6Canonical.contains(canon) { return .failure(.suspiciousHost) }
         return .success(s)
+    }
+
+    /// Returns the host-order 32-bit numeric form of an IPv4 textual address using
+    /// `inet_aton`, which folds dotted-decimal, decimal, octal (`0`-prefix), hex
+    /// (`0x`-prefix), and shortened (a.b.c / a.b / a) forms into the same value.
+    /// `internal` so HTTPHelpers can reuse it for runtime DNS-resolution checks.
+    static func canonicalIPv4Numeric(_ host: String) -> UInt32? {
+        var addr = in_addr()
+        // `inet_aton` returns 1 on success; on failure leaves `addr` untouched.
+        guard host.withCString({ inet_aton($0, &addr) }) == 1 else { return nil }
+        return UInt32(bigEndian: addr.s_addr)
+    }
+
+    /// Normalize an IPv6 textual literal (no brackets) to its canonical form via
+    /// `inet_pton` → `inet_ntop`. Returns nil for non-IPv6 input.
+    /// `internal` so HTTPHelpers can reuse it.
+    static func canonicalIPv6(_ host: String) -> String? {
+        var addr = in6_addr()
+        guard host.withCString({ inet_pton(AF_INET6, $0, &addr) == 1 }) else { return nil }
+        var buf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        let result = withUnsafePointer(to: &addr) { ptr -> String? in
+            guard inet_ntop(AF_INET6, ptr, &buf, socklen_t(buf.count)) != nil else { return nil }
+            return String(cString: buf)
+        }
+        return result
+    }
+
+    /// Host-blocklist exposed for runtime checks (HTTPHelpers pre-resolve).
+    static let blockedIPv4Numerics: Set<UInt32> = blockedIPv4Numeric
+    static let blockedIPv6Canonicals: Set<String> = blockedIPv6Canonical
+}
+
+/// DNS-rebinding SSRF guard: resolve `host` via `getaddrinfo` and check every
+/// returned address against the same blocklists `URLValidator` uses for
+/// literal addresses at config time. Returns `true` if any resolved IP is
+/// blocked. Best-effort defense in depth — there's still a TOCTOU window
+/// between this resolution and URLSession's, but the attack surface shrinks
+/// from "every poll" to "exact race within milliseconds".
+///
+/// Failure to resolve (offline, DNS down) returns `false` — we don't fail
+/// closed on resolver errors because that would block every poll the first
+/// time the network blips.
+enum DNSResolutionGuard {
+    static func resolvesToBlockedAddress(_ host: String) -> Bool {
+        // Audit-round-D36: canonicalize the hostname (lowercase + strip
+        // trailing dot) and check the SAME hostname blocklist URLValidator
+        // uses, before falling through to literal-IP and DNS-resolved-IP
+        // checks. Without this layering, runtime callers would catch
+        // numeric-IP misconfig but miss `metadata.google.internal.` (mixed
+        // case / trailing dot) etc.
+        var canonicalHost = host.lowercased()
+        if canonicalHost.hasSuffix(".") { canonicalHost.removeLast() }
+        if URLValidator.blockedHostnames.contains(canonicalHost) { return true }
+        // Literal IP forms: check the blocklist directly. Defense-in-depth in
+        // case a config predating URLValidator's tightening or a programmatic
+        // URL construction skipped the syntactic guard. Audit-round-D7.
+        if let numeric = URLValidator.canonicalIPv4Numeric(canonicalHost) {
+            return URLValidator.blockedIPv4Numerics.contains(numeric)
+        }
+        if let canon = URLValidator.canonicalIPv6(canonicalHost) {
+            return URLValidator.blockedIPv6Canonicals.contains(canon)
+        }
+
+        var hints = addrinfo(
+            ai_flags: 0,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var result: UnsafeMutablePointer<addrinfo>?
+        let status = host.withCString { getaddrinfo($0, nil, &hints, &result) }
+        guard status == 0, let head = result else { return false }
+        defer { freeaddrinfo(head) }
+
+        var blocked = false
+        var cursor: UnsafeMutablePointer<addrinfo>? = head
+        while let info = cursor {
+            let ai = info.pointee
+            if let sa = ai.ai_addr {
+                if ai.ai_family == AF_INET {
+                    sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                        let raw = UInt32(bigEndian: sin.pointee.sin_addr.s_addr)
+                        if URLValidator.blockedIPv4Numerics.contains(raw) { blocked = true }
+                    }
+                } else if ai.ai_family == AF_INET6 {
+                    sa.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
+                        var copy = sin6.pointee.sin6_addr
+                        var buf = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+                        if inet_ntop(AF_INET6, &copy, &buf, socklen_t(buf.count)) != nil {
+                            let canon = String(cString: buf)
+                            if URLValidator.blockedIPv6Canonicals.contains(canon) { blocked = true }
+                        }
+                    }
+                }
+            }
+            if blocked { break }
+            cursor = ai.ai_next
+        }
+        return blocked
     }
 }
