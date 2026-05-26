@@ -286,13 +286,27 @@ enum Anonymizer {
         let querySuffix = String(s[preQueryEnd..<s.endIndex])
         var preQueryScrubbed = preQueryStr
         preQueryScrubbed = replaceMatches(preQueryScrubbed, regex: Self.straddledCredHostPattern) { match in
-            // Match shape: `@<host>` where host = letters/digits/dots/dashes
-            // (no `:` because we don't want to consume ports here).
+            // Match shape: `@<host>` where host = letters/digits/dots/dashes,
+            // `@[ipv6]`, or `@<ipv4>`.
             guard let atIdx = match.firstIndex(of: "@") else { return match }
             let hostStart = match.index(after: atIdx)
             let host = String(match[hostStart...])
             guard !host.isEmpty, looksLikeHost(host) else { return match }
-            return "@" + "host-" + hashHost(host)
+            // Codex-v1gate-r2 fix: strip IPv6 brackets BEFORE hashHost so the
+            // hash matches what the URLComponents-primary path produces for
+            // the same IPv6 literal elsewhere in the input. Without this,
+            // `@[fe80::1%en0]` here hashes the bracketed string while
+            // `http://[fe80::1%en0]/path` (URLComponents path) hashes the
+            // unbracketed inner address — same logical host, two different
+            // hashes, defeating anonymization correlation safety.
+            let hashed: String
+            if host.hasPrefix("[") && host.hasSuffix("]") {
+                let inner = String(host.dropFirst().dropLast())
+                hashed = "[host-" + hashHost(inner) + "]"
+            } else {
+                hashed = "host-" + hashHost(host)
+            }
+            return "@" + hashed
         }
         s = preQueryScrubbed + querySuffix
         // Re-run the regex pass for any remaining standard `://user:pass@`

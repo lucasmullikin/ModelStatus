@@ -67,8 +67,17 @@ struct MLXProvider: Provider {
             // heuristic as the only signal.
             if LocalProbe.isLocal(instance.url) {
                 let port = base.port ?? Self.defaultPort(base.absoluteString)
-                guard let proc = await LocalSystemAccessProvider.current.localProcessOnPort(port) else { return false }
-                return Self.argvLooksLikeMLX(proc.args)
+                // Codex-v1gate-r2 fix: under sandbox, localProcessOnPort
+                // returns nil. Without this fallback, probe() would refuse
+                // to auto-detect MLX for a local sandboxed user even when
+                // HTTP works, breaking auto-discovery in the App Store
+                // build. Fallback to the same id-shape gate the remote
+                // path uses — weaker than argv but the right sandbox
+                // trade-off (consistent with check()).
+                if let proc = await LocalSystemAccessProvider.current.localProcessOnPort(port) {
+                    return Self.argvLooksLikeMLX(proc.args)
+                }
+                // No process inspection (sandbox): fall through to id-shape.
             }
             guard entries.contains(where: { Self.idLooksLikeMLX($0) }) else { return false }
             return true
@@ -133,7 +142,18 @@ struct MLXProvider: Provider {
             // the HTTP MLX-shape gate for local URLs and rely on argv.
             // Remote URLs still need the HTTP ID heuristic because we can't
             // inspect their process.
-            if !isLocal {
+            //
+            // Codex-v1gate-r2 fix: under sandbox, `request.localProcessInfo`
+            // is always nil. The HTTP-fallback below would accept ANY
+            // non-GGUF /v1/models response as MLX for a local URL, which
+            // misclassifies llama.cpp or vLLM serving the same endpoint
+            // shape. Tighten: when local AND no process info available
+            // (sandbox), STILL require MLX-shaped IDs in the response. This
+            // is weaker than argv-confirmation but the right v1.0 sandbox
+            // trade-off — better to under-detect MLX than to mis-label a
+            // non-MLX server as MLX.
+            let canVerifyArgv = isLocal && request.localProcessInfo != nil
+            if !canVerifyArgv {
                 guard entries.contains(where: { Self.idLooksLikeMLX($0) }) else { return offline }
             }
             let port = base.port ?? Self.defaultPort(base.absoluteString)
@@ -270,31 +290,41 @@ struct MLXProvider: Provider {
               !entries.contains(where: { Self.idLooksLikeGGUF($0) }) else {
             return []
         }
-        if !isLocalEndpoint {
+        // Codex-v1gate-r2 fix: keep availableModels CONSISTENT with check().
+        // Previously, sandboxed users got `.active` from check() (HTTP-fallback)
+        // but `[]` from availableModels(), so the menu would show MLX as
+        // active with no available models — confusing UX. Now the sandbox
+        // fallback also applies here: when local AND no argv available,
+        // require MLX-shaped IDs and skip the cache walk (we can't verify
+        // it's MLX strongly enough to trust the HF cache as "what could be
+        // served").
+        let port = base.port ?? Self.defaultPort(base.absoluteString)
+        let proc = isLocalEndpoint
+            ? await LocalSystemAccessProvider.current.localProcessOnPort(port)
+            : nil
+        let argvConfirmed = proc.map { Self.argvLooksLikeMLX($0.args) } ?? false
+        if isLocalEndpoint && proc != nil && !argvConfirmed {
+            return []   // direct build: confirmed non-MLX process. Stop.
+        }
+        if !argvConfirmed {
+            // REMOTE, OR sandboxed-local with no process inspection. Either
+            // way we have no argv signal — require MLX-shaped IDs.
             guard entries.contains(where: { Self.idLooksLikeMLX($0) }) else { return [] }
         }
-        // Local-process verification gate for local URLs.
-        var localProcessConfirmed = false
-        if isLocalEndpoint {
-            let port = base.port ?? Self.defaultPort(base.absoluteString)
-            if let proc = await LocalSystemAccessProvider.current.localProcessOnPort(port),
-               Self.argvLooksLikeMLX(proc.args) {
-                localProcessConfirmed = true
-            } else {
-                return []   // local but no MLX process → don't expose anything
-            }
-        }
-        // Insert HTTP-derived names. For LOCAL endpoints (argv-confirmed
-        // above), trust whatever the server reports. For REMOTE endpoints,
-        // filter to MLX-shaped IDs only so a mixed response doesn't leak
+        // Insert HTTP-derived names. For ARGV-confirmed local, trust the
+        // server's full response. For everything else (remote, or sandboxed-
+        // local), filter to MLX-shaped IDs so a mixed response doesn't leak
         // unrelated provider names.
-        if isLocalEndpoint {
+        if argvConfirmed {
             entries.forEach { names.insert($0.id) }
         } else {
             entries.filter { Self.idLooksLikeMLX($0) }.forEach { names.insert($0.id) }
         }
-        // Walk local cache only when local-process verification passed.
-        if localProcessConfirmed {
+        // Walk local cache only when argv-confirmed (direct-download build
+        // with verified MLX process). Sandbox + remote both skip the cache
+        // walk — the cache says nothing useful when we can't verify the
+        // process binding the port is actually MLX.
+        if argvConfirmed {
             Self.walkMLXCache().forEach { names.insert($0) }
         }
         return names.sorted()
