@@ -6,11 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to a commit SHA so a re-tagged action version can't silently
+      # change behavior. Update via Dependabot or by hand against the action's
+      # release notes.
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Show Swift version
         run: swift --version
@@ -27,7 +33,7 @@ jobs:
           ./scripts/build-app.sh
 
       - name: Upload .app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
           name: ModelStatus-app
           path: build/ModelStatus.app

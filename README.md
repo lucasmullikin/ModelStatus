@@ -68,7 +68,7 @@ Then `open /Applications/ModelStatus.app`. The 🧠 icon appears in the menu bar
 
 ### Option B — GitHub Release
 
-1. Download `ModelStatus-v0.1.0-beta.zip` from [Releases](https://github.com/lucasmullikin/ModelStatus/releases)
+1. Download `ModelStatus-v0.2.0.zip` from [Releases](https://github.com/lucasmullikin/ModelStatus/releases)
 2. Unzip, drag `ModelStatus.app` to `/Applications`
 3. `xattr -dr com.apple.quarantine /Applications/ModelStatus.app`
 4. Open it
@@ -136,7 +136,7 @@ Edit through the Settings window or by hand-editing the JSON while the app is cl
 - **URLs validated** — only `http://` and `https://`. Cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`, etc.) are blocked.
 - **Response size cap** — 4 MB per `/api/ps` and `/api/tags` response to prevent memory amplification from a malicious endpoint.
 - **App Transport Security** — `NSAllowsLocalNetworking=true` permits plain `http://` to loopback and `.local` hosts. For remote, prefer HTTPS through a reverse proxy.
-- **Sandbox is OFF.** The app uses `lsof` / `ps` / `pgrep` for local-server telemetry (active model, client process, CPU/RAM). These tools aren't available inside the macOS App Sandbox. This is an intentional trade-off — if you'd rather a sandboxed binary, wait for the v4.x Mac App Store build (planned, will have degraded telemetry).
+- **Sandbox is OFF.** The app uses `lsof` / `ps` / `pgrep` for local-server telemetry (active model, client process, CPU/RAM). These tools aren't available inside the macOS App Sandbox. This is an intentional trade-off. The future Mac App Store build will inject a sandboxed `LocalSystemAccess` provider that returns nil for these probes — polling will keep working (HTTP-only), but client-process display, CPU/RSS, and Tailscale discovery will degrade gracefully to "unavailable."
 - **Auth headers** are stored only in the Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. No iCloud sync.
 - **No analytics, no telemetry.** Only outbound traffic is to the servers you configure.
 
@@ -176,12 +176,15 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for project layout and code style.
 
 See [`RELEASE-PLAN.md`](RELEASE-PLAN.md) for the full plan. Highlights:
 
-- **v3.1** — Apple Developer Program, notarized binary (no more `xattr` step), official `homebrew/cask` submission, dedicated MLXProvider, Sparkle auto-update
-- **v3.5** — App Store TestFlight (paid, sandboxed)
-- **v4.0** — Sandboxed Mac App Store release, eventual Linux/Windows builds
+- **Shipped in v0.2** ([details](RELEASE-PLAN.md#v02-summary)): dedicated MLXProvider, OSLog viewer + diagnostic bundle export, salted-hash log scrubber, UpdateChecker snooze/dismiss, @MainActor ConfigManager, `LocalSystemAccess` abstraction, 50+ rounds of security/correctness hardening
+- **Next**: notarized binary (no more `xattr` step), official `homebrew/cask` submission
+- **Later**: Mac App Store release (paid, sandboxed; degraded local-process telemetry)
+- **Eventually**: Linux/Windows builds
+
+Specific version labels and dates aren't promised. See [RELEASE-PLAN.md](RELEASE-PLAN.md) for the current scope of work in flight.
 
 ## License
 
 [MIT](LICENSE) — Copyright © 2026 Lucrative Pictures LLC.
 
-Source is and always will be free. The paid Mac App Store build (planned v3.5+) funds development. Build-from-source remains free forever.
+Source is and always will be free. A future paid Mac App Store build is planned to fund development. Build-from-source will remain free forever.

@@ -12,3 +12,15 @@ xcuserdata/
 # Legacy bundle skeleton — build-app.sh assembles a fresh .app into build/
 ModelStatus.app/
 OllamaStatus.app/
+# Secrets / runtime artifacts — never commit
+.env
+.env.*
+*.keychain
+*.keychain-db
+secrets.json
+# Diagnostic bundles produced by Export Diagnostic Bundle… in the menu
+ModelStatus-Diagnostics-*.zip
+# Local IDE / editor noise
+.vscode/
+.idea/
+*.swp

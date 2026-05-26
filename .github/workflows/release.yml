@@ -5,6 +5,8 @@ on:
     tags:
       - "v*"
 
+# Minimum privileges. `contents: write` is required by action-gh-release to
+# create the GitHub Release and attach artifacts. Nothing else is needed.
 permissions:
   contents: write
 
@@ -12,7 +14,7 @@ jobs:
   release:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Build release .app
         run: |
@@ -31,7 +33,7 @@ jobs:
           cat ModelStatus-${{ github.ref_name }}.zip.sha256
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.2
         with:
           files: |
             build/ModelStatus-${{ github.ref_name }}.zip

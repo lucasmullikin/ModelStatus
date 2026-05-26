@@ -36,6 +36,16 @@ ACTIVE_USER=$(gh api user --jq '.login')
 [[ "$ACTIVE_USER" == "lucasmullikin" ]] || die "gh authed as '$ACTIVE_USER', need 'lucasmullikin'"
 ok "gh authed as lucasmullikin"
 
+# Security preflight: refuse to release if anything secret-shaped is staged
+# or in the working tree. Catches accidental `.env` / `*.pem` / credentials
+# being included in a release commit.
+SUSPECT=$(git status --porcelain | awk '{print $2}' | grep -E '(^|/)\.env(\..*)?$|\.pem$|_key$|secret|credential|password' || true)
+if [[ -n "$SUSPECT" ]]; then
+    die "Refusing to release — secret-shaped files staged or untracked:
+$SUSPECT"
+fi
+ok "no secret-shaped files in working tree"
+
 # ─── 1. push main ──────────────────────────────────────────────────────────
 bold "→ Pushing main"
 git push origin main
@@ -85,7 +95,17 @@ sed -i '' -E "s|sha256[[:space:]]+(\":no_check.*\"|\"[a-f0-9]{64}\")|sha256 \"${
 sed -i '' "s|sha256 :no_check.*|sha256 \"${SHA256}\"|" homebrew-tap/Casks/modelstatus.rb
 sed -i '' "s|version \".*\"|version \"${TAG#v}\"|" homebrew-tap/Casks/modelstatus.rb
 grep -E "version|sha256" homebrew-tap/Casks/modelstatus.rb | head -2
-ok "cask updated"
+
+# Audit-round-D6: trust-boundary check for the tap. If someone gains push
+# access to the tap repo and rewrites the cask `url` to point at a malicious
+# host, sha256 won't help — the hash would still match THEIR binary. Refuse
+# to release unless the cask still points at GitHub Releases at the expected
+# repo. Sha256 in this run will then bind the user to our binary, not theirs.
+EXPECTED_URL_PREFIX="https://github.com/${REPO}/releases/download/"
+if ! grep -F "$EXPECTED_URL_PREFIX" homebrew-tap/Casks/modelstatus.rb >/dev/null; then
+    die "Cask download URL no longer points at ${EXPECTED_URL_PREFIX}. Refusing to release."
+fi
+ok "cask updated; download URL trust-boundary check passed"
 
 # ─── 7. publish homebrew tap as its own repo ───────────────────────────────
 bold "→ Publishing ${TAP_REPO}"
@@ -99,7 +119,10 @@ if gh repo view "$TAP_REPO" >/dev/null 2>&1; then
     git add -A
     git commit -m "Update modelstatus cask to ${TAG}" 2>/dev/null || warn "nothing to commit"
     git branch -M main
-    git push -u origin main --force-with-lease
+    # Plain push — refuse rather than overwrite if the remote diverged. The
+    # tap is single-purpose, so divergence means a human edited it out of
+    # band and deserves a manual look. Audit-round-D5.
+    git push -u origin main
     cd ..
 else
     cd homebrew-tap
