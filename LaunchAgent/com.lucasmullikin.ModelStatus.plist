@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.lucrativepictures.ModelStatus</string>
+    <string>com.lucasmullikin.ModelStatus</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Applications/ModelStatus.app/Contents/MacOS/ModelStatus</string>

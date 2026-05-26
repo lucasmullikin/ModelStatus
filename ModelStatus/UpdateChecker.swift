@@ -239,7 +239,7 @@ enum UpdateChecker {
             UserDefaults.standard.set(now, forKey: lastCheckTimeKey)
 
             if !latestV.isNewer(than: currentV) {
-                logger.debug("update check: \(release.tagName, privacy: .public) not newer than \(current, privacy: .public)")
+                logger.notice("update check: \(release.tagName, privacy: .public) not newer than \(current, privacy: .public) — up to date")
                 if force { await notifyUpToDate(current: current) }
                 return
             }
@@ -257,7 +257,7 @@ enum UpdateChecker {
                 if force {
                     await notifyDismissedButForced(latestTag: release.tagName, current: current)
                 } else {
-                    logger.debug("update check: tag \(release.tagName, privacy: .public) was dismissed by user; suppressing banner")
+                    logger.notice("update check: tag \(release.tagName, privacy: .public) was dismissed by user; suppressing banner")
                 }
                 return
             }
@@ -387,7 +387,7 @@ enum UpdateChecker {
     static func snoozeCachedUpdate() {
         let snoozeUntil = Date().addingTimeInterval(7 * 24 * 60 * 60)
         UserDefaults.standard.set(snoozeUntil, forKey: snoozeUntilKey)
-        logger.debug("update snoozed until \(snoozeUntil, privacy: .public)")
+        logger.notice("update snoozed until \(snoozeUntil, privacy: .public)")
     }
 
     /// Add the cached tag to the dismissed list — `cachedAvailableUpdate()` returns nil
@@ -400,7 +400,7 @@ enum UpdateChecker {
         list.append(tag)
         if list.count > 16 { list = Array(list.suffix(16)) }
         UserDefaults.standard.set(list, forKey: dismissedVersionsKey)
-        logger.debug("update tag \(tag, privacy: .public) dismissed")
+        logger.notice("update tag \(tag, privacy: .public) dismissed")
     }
 
     // MARK: - Install-source detection (drives "how to upgrade" messaging)

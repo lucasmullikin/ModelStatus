@@ -4,7 +4,7 @@ import Security
 import Darwin
 import OSLog
 
-private let anonLog = Logger(subsystem: "com.lucrativepictures.ModelStatus", category: "anonymizer")
+private let anonLog = Logger(subsystem: "com.lucasmullikin.ModelStatus", category: "anonymizer")
 
 /// Hostname/URL/free-text scrubber for diagnostic bundles.
 ///
@@ -18,7 +18,7 @@ private let anonLog = Logger(subsystem: "com.lucrativepictures.ModelStatus", cat
 /// lifetime of this process so every `hashHost()` call in a single export
 /// produces stable tokens.
 enum Anonymizer {
-    private static let keychainService = "com.lucrativepictures.ModelStatus.anon"
+    private static let keychainService = "com.lucasmullikin.ModelStatus.anon"
     private static let keychainAccount = "salt"
     private static let saltByteCount = 8
 

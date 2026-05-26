@@ -56,7 +56,7 @@ ModelStatus/
 │   └── ModelStatus.entitlements
 ├── Tests/ModelStatusTests/       XCTest suites
 ├── LaunchAgent/
-│   └── com.lucrativepictures.ModelStatus.plist
+│   └── com.lucasmullikin.ModelStatus.plist
 ├── homebrew-tap/                 Homebrew Cask formula + tap README
 ├── scripts/build-app.sh          SwiftPM build → .app bundle
 ├── .github/workflows/            build.yml (CI) + release.yml (tag → Release)

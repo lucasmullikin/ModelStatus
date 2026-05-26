@@ -2,7 +2,7 @@
 
 **Developer:** Lucas Mullikin  
 **Team ID:** ZFXWBW78LZ  
-**Bundle ID:** com.lucrativepictures.ModelStatus  
+**Bundle ID:** com.lucasmullikin.ModelStatus  
 **Price:** $6.99 (one-time)  
 **Platform:** macOS
 

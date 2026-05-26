@@ -28,21 +28,27 @@ final class ConfigManagerConcurrencyTests: XCTestCase {
     }
 
     func testInterleavedReadsAndWritesAreSerialized() async throws {
-        let starting = ConfigManager.shared.instances
-        defer { ConfigManager.shared.instances = starting }
+        // v1.0-final: `ConfigManager.instances` is now read-only externally
+        // (transactional methods are the only mutation path). Reset is via
+        // capturing the starting IDs and removing any that weren't there.
+        let startingIDs = Set(ConfigManager.shared.instances.map { $0.id })
+        defer {
+            for inst in ConfigManager.shared.instances
+                where !startingIDs.contains(inst.id) {
+                ConfigManager.shared.removeInstance(id: inst.id)
+            }
+        }
 
         let baseline = ConfigManager.shared.instances.count
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<100 {
                 group.addTask {
                     await MainActor.run {
-                        var current = ConfigManager.shared.instances
-                        current.append(Instance(
+                        _ = ConfigManager.shared.addInstance(
                             name: "stress-\(i)",
                             url: "http://127.0.0.1:\(11500 + i)",
                             kind: .ollama
-                        ))
-                        ConfigManager.shared.instances = current
+                        )
                     }
                 }
             }

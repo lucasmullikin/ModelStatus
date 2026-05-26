@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0] — TBD
+
+Mac App Store release.
+
+### Added
+- **Sandboxed build** — App Sandbox enabled; `LocalSystemAccess` protocol gates all process-inspection calls behind `SandboxedLocalSystemAccess` (HTTP-only polling; CPU/RSS/client-process/Tailscale discovery degrade to "unavailable" gracefully).
+- **SMAppService start-at-login** — Settings → "Start ModelStatus at login" checkbox replaces manual LaunchAgent installation.
+- **Capability gating** — `LocalSystemAccess.configure()` rejects `DirectLocalSystemAccess` under the `MODELSTATUS_APP_STORE` compile flag; sandbox builds always receive `SandboxedLocalSystemAccess`.
+- **App Store distribution** — $6.99 one-time purchase, free updates forever.
+
+---
+
+## [0.2.1] — 2026-05-26
+
+### Changed
+- **Bundle ID renamed**: `com.lucrativepictures.ModelStatus` → `com.lucasmullikin.ModelStatus` (Individual Apple Developer enrollment; LLC dropped from bundle ID, copyright, and About panel). Legacy migration in `ConfigManager` automatically carries forward user state from v0.2.0 on first launch.
+- **4 architectural refactors** (deferred post-v0.2): Anonymizer `ParsedAuthority` struct consolidating 3 URL-parsing pipelines; `Monitor` rewritten to deliver events via `AsyncStream` (`statusEvents` / `reachabilityEvents`) replacing closure callbacks; `Provider.swift` split into `Provider.swift` / `HTTPHelpers.swift` / `LocalProbe.swift` / `Shell.swift`; MLX `argv` hoisted from inline probe logic.
+
+### Added
+- **Logging audit** — ~15 new `.notice`-level `OSLog` entries covering poll cycles, reachability transitions, auto-detection, discovery scans, settings actions, and app lifecycle events.
+- **`LocalSystemAccess` trust boundary** — `LocalSystemAccess.configure()` now explicitly rejects `DirectLocalSystemAccess` when `MODELSTATUS_APP_STORE` is set at compile time, making sandbox enforcement a hard compile-time gate rather than a runtime convention.
+
+### Fixed
+- **LogViewer**: `OSLogStore.local()` replaces `OSLogStore(scope: .currentProcessIdentifier)`, which returned 0 entries on hardened-runtime signed builds.
+- **Anonymizer IPv6 parsing**: `fe80::1` was mis-parsed as host `fe80:` / port `:1` due to incorrect unbracketed colon-count logic. Now correctly identified as a bare IPv6 address with no port.
+- **Anonymizer bracket stripping**: `straddledCredHostPattern` now strips brackets before hashing the host, preventing `[fe80::1]` from being hashed differently than `fe80::1`.
+- **MLXProvider HTTP-fallback**: sandbox builds where `localProcessInfo` is nil now consistently fall back through `probe()` → `check()` → `availableModels()` with the MLX-shape model-ID gate applied at each step.
+
+### Security / Review
+- Architect + Codex hard-mode gate review completed prior to release.
+
+---
+
 ## [0.1.1-beta] — 2026-05-25
 
 Hours after v0.1.0-beta shipped, a post-release Codex 5.5 audit caught two

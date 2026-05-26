@@ -32,7 +32,7 @@ Most menu bar tools show one status dot for one server. ModelStatus monitors **m
 - **Network discovery** — Settings → Discover scans your local /24 and Tailscale peers for known model-server ports.
 - **Compact mode** — one-line-per-server menu when you have many instances.
 - **Local Ollama process control** — Start/Stop, works with both Homebrew and the official `.dmg` install.
-- **Start at login** via a bundled LaunchAgent.
+- **Start at login** — Settings → "Start ModelStatus at login" checkbox (SMAppService). Legacy LaunchAgent also included for Homebrew/direct installs.
 - **No telemetry, no analytics, no cloud.**
 
 ## Supported providers
@@ -84,9 +84,15 @@ open build/ModelStatus.app
 
 ### Start at login
 
+Open **Settings** in the app and check **"Start ModelStatus at login"**. This uses `SMAppService` (macOS 13+) and requires no manual steps.
+
+#### Legacy: LaunchAgent (Homebrew / direct installs, pre-v1.0)
+
+> Note: the LaunchAgent method is superseded by the SMAppService checkbox in v1.0+. Use it only if you need start-at-login on a build that predates the Settings checkbox.
+
 ```bash
-cp LaunchAgent/com.lucrativepictures.ModelStatus.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.lucrativepictures.ModelStatus.plist
+cp LaunchAgent/com.lucasmullikin.ModelStatus.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.lucasmullikin.ModelStatus.plist
 ```
 
 (The bundled LaunchAgent expects the app at `/Applications/ModelStatus.app`. Edit it if you installed elsewhere.)
@@ -114,7 +120,7 @@ The blue "Generating" dot is **only** shown for Ollama, which exposes inference 
 
 ## Configuration
 
-File: `~/Library/Preferences/com.lucrativepictures.ModelStatus.json` (mode 0600)
+File: `~/Library/Preferences/com.lucasmullikin.ModelStatus.json` (mode 0600)
 
 ```json
 {
@@ -177,14 +183,14 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for project layout and code style.
 See [`RELEASE-PLAN.md`](RELEASE-PLAN.md) for the full plan. Highlights:
 
 - **Shipped in v0.2** ([details](RELEASE-PLAN.md#v02-summary)): dedicated MLXProvider, OSLog viewer + diagnostic bundle export, salted-hash log scrubber, UpdateChecker snooze/dismiss, @MainActor ConfigManager, `LocalSystemAccess` abstraction, 50+ rounds of security/correctness hardening
-- **Next**: notarized binary (no more `xattr` step), official `homebrew/cask` submission
-- **Later**: Mac App Store release (paid, sandboxed; degraded local-process telemetry)
+- **Shipped in v0.2.1**: bundle-ID rename to `com.lucasmullikin.ModelStatus`, logging audit, LogViewer fix, Anonymizer IPv6 fixes, MLXProvider sandbox fallback, 4 architectural refactors
+- **Next (v1.0)**: Mac App Store release — $6.99 one-time, sandboxed build, SMAppService start-at-login, free updates forever
 - **Eventually**: Linux/Windows builds
 
 Specific version labels and dates aren't promised. See [RELEASE-PLAN.md](RELEASE-PLAN.md) for the current scope of work in flight.
 
 ## License
 
-[MIT](LICENSE) — Copyright © 2026 Lucrative Pictures LLC.
+[MIT](LICENSE) — Copyright © 2026 Lucas Mullikin.
 
 Source is and always will be free. A future paid Mac App Store build is planned to fund development. Build-from-source will remain free forever.

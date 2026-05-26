@@ -65,6 +65,10 @@ final class SettingsWindowController: NSWindowController {
         tableView.allowsMultipleSelection = false
         tableView.doubleAction = #selector(tableDoubleClick)
         tableView.target = self
+        // Accessibility-audit-v1final: NSTableView's default a11y label is
+        // just "table" with no context. Name it so VoiceOver users can
+        // orient themselves.
+        tableView.setAccessibilityLabel("Configured servers")
 
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
@@ -104,6 +108,9 @@ final class SettingsWindowController: NSWindowController {
         pollPopup.action = #selector(pollChanged)
         pollPopup.toolTip = "2s / 5s / 10s / 30s / 1m / 3m"
         pollPopup.translatesAutoresizingMaskIntoConstraints = false
+        // Accessibility-audit-v1final: VoiceOver otherwise just announces
+        // the selected value ("5s") with no context about what it controls.
+        pollPopup.setAccessibilityLabel("Poll interval")
         contentView.addSubview(pollPopup)
 
         notifyCheckbox.target = self
@@ -143,7 +150,7 @@ final class SettingsWindowController: NSWindowController {
         // To pre-empt the App Review IP-mismatch flag under Guideline 5.2.1
         // AND to be honest with users about who's behind the binary, list
         // both: brand · author · license.
-        let authorLabel = NSTextField(labelWithString: "Lucrative Pictures LLC · Lucas Mullikin · MIT-licensed source")
+        let authorLabel = NSTextField(labelWithString: "Lucas Mullikin · MIT-licensed source")
         authorLabel.font = NSFont.systemFont(ofSize: 11)
         authorLabel.textColor = .secondaryLabelColor
         authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -438,7 +445,7 @@ final class SettingsWindowController: NSWindowController {
             if !ok, let self = self {
                 let warn = NSAlert()
                 warn.messageText = "Couldn't save Authorization header"
-                warn.informativeText = "The macOS Keychain rejected the write. Check Console.app under com.lucrativepictures.ModelStatus for the underlying OSStatus."
+                warn.informativeText = "The macOS Keychain rejected the write. Check Console.app under com.lucasmullikin.ModelStatus for the underlying OSStatus."
                 warn.alertStyle = .warning
                 if let w = self.window { warn.beginSheetModal(for: w, completionHandler: nil) }
             }

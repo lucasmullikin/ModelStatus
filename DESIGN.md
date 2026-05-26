@@ -89,6 +89,54 @@ The UI gates menu actions exclusively on these flags. `AppDelegate.rebuildMenu()
 
 ---
 
+## 3a. Provider layer split (v0.2)
+
+The original `Provider.swift` grew to 614 lines. In v0.2 it was decomposed into four focused files:
+
+| File | Contents |
+|---|---|
+| `Provider.swift` | `Provider` protocol, `ProviderCapabilities`, `ProviderRegistry`, `ServerState`, `ServerStatus`, `LoadedModel` |
+| `HTTPHelpers.swift` | `HTTPHelpers.get` / `HTTPHelpers.post`, response size cap, auth injection |
+| `LocalProbe.swift` | `LocalProbe` namespace: `cpuFor`, `memoryMBFor`, `clientIP`, `establishedConnectionPresent`, `pidsFor` |
+| `Shell.swift` | `runShell` bridging Swift Concurrency to Unix process I/O via `withCheckedContinuation` + DispatchQueue |
+
+The File Map (§14) reflects the post-split layout.
+
+---
+
+## 3b. LocalSystemAccess abstraction (v0.2)
+
+Process-inspection calls (`ps`, `lsof`, `pgrep`) are gated behind a `LocalSystemAccess` protocol with two concrete implementations:
+
+- **`DirectLocalSystemAccess`** — invokes the real shell commands; used in the Homebrew/direct build.
+- **`SandboxedLocalSystemAccess`** — returns `nil` / empty for all probes; used in the App Store sandboxed build. HTTP polling continues normally; only CPU/RSS/client-process/Tailscale discovery degrade.
+
+`LocalSystemAccess.configure()` is the injection point. It is called once at startup and rejects `DirectLocalSystemAccess` when the `MODELSTATUS_APP_STORE` compile flag is set, making sandbox enforcement a hard compile-time gate rather than a runtime convention. `LocalProbe` delegates all shell execution through whichever implementation was injected.
+
+---
+
+## 3c. AsyncStream event delivery (v0.2)
+
+`Monitor` replaced its `onStatusChange` and `onReachabilityChange` closure callbacks with two typed `AsyncStream` properties:
+
+- **`Monitor.statusEvents: AsyncStream<[ServerStatus]>`** — emits a new sorted status array on every completed poll cycle.
+- **`Monitor.reachabilityEvents: AsyncStream<(Instance, Bool)>`** — emits `(instance, isReachable)` on every reachability transition.
+
+`AppDelegate` consumes both streams via `for await` loops launched as `Task` children on `@MainActor`. This removes the `@escaping` closure captures that were scattered across `startPolling` call sites and makes the data-flow path unambiguous to the Swift concurrency checker.
+
+---
+
+## 3d. Anonymizer ParsedAuthority (v0.2)
+
+The log scrubber previously contained three separate URL-parsing pipelines (one for bare `host:port`, one for bracketed IPv6 `[host]:port`, and one for `scheme://cred@host:port` with embedded credentials). These were consolidated into two functions:
+
+- **`parseAuthority(_ raw: String) -> ParsedAuthority`** — parses any authority string into `(host, port?, credentials?)` handling all three forms, including unbracketed IPv6 colon-count disambiguation.
+- **`renderHashedAuthority(_ a: ParsedAuthority) -> String`** — re-serializes with host replaced by a salted SHA-256 prefix, brackets restored for IPv6, and credentials replaced by a fixed placeholder.
+
+The old `straddledCredHostPattern` regex is retained as a pre-filter but now strips brackets before hashing, ensuring `[fe80::1]` and `fe80::1` hash identically.
+
+---
+
 ## 4. Polling Lifecycle
 
 `Monitor.startPolling` (`Monitor.swift:29`) resets all memo dictionaries and cancels any prior `pollTask`, then spawns a new `Task` that calls `poll()` in a tight loop with `Task.sleep` for the configured interval. `poll()` reads `ConfigManager.shared.instances` fresh on every iteration — config changes take effect within one poll cycle without requiring a restart.
@@ -186,7 +234,7 @@ Discovery is never invoked automatically. It is triggered only by the "Discover�
 
 ## 9. Storage
 
-**Config file**: `~/Library/Preferences/com.lucrativepictures.ModelStatus.json`. Written atomically with `Data.write(to:options:[.atomic,.completeFileProtection])` and then `setAttributes([.posixPermissions: 0o600])` (`ConfigManager.swift:161-166`). `completeFileProtection` encrypts the file using the device passcode key when the device is locked — on macOS this is effectively full-disk encryption, but the flag is set for parity with iOS secure storage conventions.
+**Config file**: `~/Library/Preferences/com.lucasmullikin.ModelStatus.json`. Written atomically with `Data.write(to:options:[.atomic,.completeFileProtection])` and then `setAttributes([.posixPermissions: 0o600])` (`ConfigManager.swift:161-166`). `completeFileProtection` encrypts the file using the device passcode key when the device is locked — on macOS this is effectively full-disk encryption, but the flag is set for parity with iOS secure storage conventions.
 
 The file contains `AppConfig`: an `instances` array of `Instance` records (id, name, url, kind), `pollInterval`, `notifyOnStateChange`, and `compactMode`. Auth headers are **not** in the file.
 
@@ -196,7 +244,7 @@ The file contains `AppConfig`: an `instances` array of `Instance` records (id, n
 
 **`PollInterval` enum** (`ConfigManager.swift:78`): `.fast` (2s), `.normal` (5s), `.slow` (10s), `.lazy` (30s), `.idle` (60s), `.sleepy` (180s). `PollInterval.closest(to:)` finds the nearest enum case to an arbitrary `TimeInterval`, used when loading a config that was saved with a value not matching any case.
 
-**Keychain**: Service identifier `"com.lucrativepictures.ModelStatus.auth"`, account = `instance.id.uuidString`. Accessibility attribute `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` (`Keychain.swift:36`): the auth header is readable after the first unlock post-boot, but is not migrated to other devices via iCloud Keychain. Removing an instance via `ConfigManager.removeInstance` also calls `Keychain.setAuthHeader(nil, for: id)` (`ConfigManager.swift:183`), so orphaned credentials don't accumulate.
+**Keychain**: Service identifier `"com.lucasmullikin.ModelStatus.auth"`, account = `instance.id.uuidString`. Accessibility attribute `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` (`Keychain.swift:36`): the auth header is readable after the first unlock post-boot, but is not migrated to other devices via iCloud Keychain. Removing an instance via `ConfigManager.removeInstance` also calls `Keychain.setAuthHeader(nil, for: id)` (`ConfigManager.swift:183`), so orphaned credentials don't accumulate.
 
 ---
 
@@ -290,7 +338,7 @@ Test target is `ModelStatusTests` at `Tests/ModelStatusTests/`, declared in `Pac
 
 **Notarization** — deferred. The release workflow does not submit to Apple Notary Service. The Homebrew cask caveats document the manual quarantine removal step as a workaround.
 
-**Login-item / LaunchAgent** (`LaunchAgent/`): A `com.lucrativepictures.ModelStatus.plist` LaunchAgent is included in the repo for users who want autostart without the Homebrew cask. Copy to `~/Library/LaunchAgents/` and bootstrap with `launchctl bootstrap gui/$UID`.
+**Login-item / LaunchAgent** (`LaunchAgent/`): A `com.lucasmullikin.ModelStatus.plist` LaunchAgent is included in the repo for users who want autostart without the Homebrew cask. Copy to `~/Library/LaunchAgents/` and bootstrap with `launchctl bootstrap gui/$UID`.
 
 ---
 
@@ -324,7 +372,7 @@ Test target is `ModelStatusTests` at `Tests/ModelStatusTests/`, declared in `Pac
 
 - **Dedicated `MLXProvider`**: `mlx_lm.server` speaks `/v1/models` so it currently falls through to `OpenAIProvider`. A dedicated provider could detect it by probing `/v1/models` and checking the response structure (mlx_lm reports quantization info in model ids), and could surface per-layer memory stats once mlx exposes a metrics endpoint. This requires either Apple releasing an official metrics API for mlx_lm or a community extension.
 
-- **App Store sandboxed build**: Distributing via the Mac App Store would require enabling `com.apple.security.app-sandbox` and `com.apple.security.temporary-exception.files.absolute-path.read-only` for `/bin/ps` and `/usr/sbin/lsof` paths, or replacing all process-inspection calls with an XPC helper. The entire `LocalProbe` namespace would need to be redesigned. This is architecturally possible but non-trivial and would require Apple approving the XPC helper entitlement.
+- **App Store sandboxed build** _(in progress for v1.0)_: The `LocalSystemAccess` abstraction (§3b) was introduced specifically to enable this. The App Store build sets `MODELSTATUS_APP_STORE`, which injects `SandboxedLocalSystemAccess` and disables all shell process-inspection. `SMAppService` replaces the LaunchAgent for start-at-login. No XPC helper is required; the trade-off is that CPU/RSS/client-process/Tailscale discovery are unavailable in the sandboxed build.
 
 - **Linux / Windows port**: The `LocalProbe` functions use macOS-specific paths (`/usr/sbin/lsof`, `/opt/homebrew`, `getifaddrs` with macOS struct layout). `Discovery` uses the Tailscale CLI path `/Applications/Tailscale.app/…`. `ConfigManager` writes to `~/Library/Preferences/`. `AppDelegate` and `StatusIndicator` use AppKit exclusively. A cross-platform port would need a platform abstraction layer for all five of these concerns and a GTK or WinUI 3 UI layer.
 

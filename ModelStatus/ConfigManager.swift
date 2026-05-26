@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import OSLog
 
-private let cfgLogger = Logger(subsystem: "com.lucrativepictures.ModelStatus", category: "config")
+private let cfgLogger = Logger(subsystem: "com.lucasmullikin.ModelStatus", category: "config")
 
 enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case auto      // Auto-detect on first probe
@@ -125,10 +125,17 @@ final class ConfigManager {
 
     // Static constants are immutable and safe to read from any isolation domain.
     // Marking nonisolated makes that explicit so Logger(subsystem:) etc. stay synchronous.
-    nonisolated static let bundleIdentifier = "com.lucrativepictures.ModelStatus"
+    nonisolated static let bundleIdentifier = "com.lucasmullikin.ModelStatus"
+    /// Pre-v0.2.1 bundle IDs we migrate config from on first launch under the
+    /// new ID. Hard cut on the LLC → Individual rename happened in v0.2.1
+    /// (decided 2026-05-26: shipping under Individual Apple Developer
+    /// enrollment, no LLC reference in the bundle ID). The migration is
+    /// graceful — any user who already has v0.2.0 installed keeps their
+    /// server list + auth headers + preferences.
     nonisolated private static let legacyBundleIdentifiers = [
-        "com.lucrativepictures.OllamaStatus",
-        "com.local.ollamastatus"
+        "com.lucrativepictures.ModelStatus",   // v0.2.0 (briefly, pre-rename)
+        "com.lucrativepictures.OllamaStatus",  // v0.1.x (pre-rename to ModelStatus)
+        "com.local.ollamastatus"               // pre-v0.1 dev builds
     ]
 
     private let configURL: URL
@@ -138,23 +145,18 @@ final class ConfigManager {
     /// value if `save()` fails, so in-memory state never diverges from
     /// what's on disk. Callers that care about success can use the
     /// explicit `set*` methods below.
-    var config: AppConfig {
-        get { _config }
-        set {
-            let snapshot = _config
-            _config = newValue
-            if !save() { _config = snapshot }
-        }
-    }
+    /// Codex-v1final fix: previously a public setter that allowed callers
+    /// to wholesale-replace the AppConfig, bypassing the transactional
+    /// addInstance/removeInstance/updateInstance paths (and their Keychain
+    /// rollback safety). Now read-only externally; mutations must go
+    /// through the explicit methods that handle Keychain consistency.
+    var config: AppConfig { _config }
 
-    var instances: [Instance] {
-        get { _config.instances }
-        set {
-            let snapshot = _config.instances
-            _config.instances = newValue
-            if !save() { _config.instances = snapshot }
-        }
-    }
+    /// Codex-v1final fix: instances is read-only externally for the same
+    /// reason as `config` above. Callers that need to add/remove must use
+    /// `addInstance(name:url:kind:authHeader:)` / `removeInstance(at:)` /
+    /// `removeInstance(id:)` / `updateInstance(id:name:url:kind:)`.
+    var instances: [Instance] { _config.instances }
 
     var pollInterval: TimeInterval {
         get { _config.pollInterval }
@@ -294,6 +296,7 @@ final class ConfigManager {
             cfgLogger.error("addInstance: rolled back \(name, privacy: .public) — config persistence failed")
             return nil
         }
+        cfgLogger.notice("added server \(name, privacy: .public) (\(Anonymizer.scrubURL(url), privacy: .public)) kind=\(String(describing: kind), privacy: .public) auth=\(hasCredentials ? "set" : "none")")
         return inst
     }
 
@@ -313,6 +316,7 @@ final class ConfigManager {
         if !Keychain.setAuthHeader(nil, for: removed.id) {
             cfgLogger.error("removeInstance(at:): config saved but Keychain credential delete failed for instance \(removed.name, privacy: .public)")
         }
+        cfgLogger.notice("removed server \(removed.name, privacy: .public) (\(Anonymizer.scrubURL(removed.url), privacy: .public))")
     }
 
     func removeInstance(id: UUID) {
@@ -327,6 +331,7 @@ final class ConfigManager {
         if !Keychain.setAuthHeader(nil, for: removed.id) {
             cfgLogger.error("removeInstance(id:): config saved but Keychain credential delete failed for instance \(removed.name, privacy: .public)")
         }
+        cfgLogger.notice("removed server \(removed.name, privacy: .public) (\(Anonymizer.scrubURL(removed.url), privacy: .public))")
     }
 
     func updateInstance(id: UUID, name: String? = nil, url: String? = nil, kind: ProviderKind? = nil) {
@@ -338,7 +343,10 @@ final class ConfigManager {
         if !save() {
             _config.instances[i] = snapshot
             cfgLogger.error("updateInstance: rolled back — config persistence failed")
+            return
         }
+        let updated = _config.instances[i]
+        cfgLogger.notice("updated server \(updated.name, privacy: .public) (\(Anonymizer.scrubURL(updated.url), privacy: .public)) kind=\(String(describing: updated.kind), privacy: .public)")
     }
 }
 
@@ -430,7 +438,49 @@ enum URLValidator {
         // IPv6 canonicalization handles ::-compression + uppercase variants.
         if let canon = canonicalIPv6(host),
            blockedIPv6Canonical.contains(canon) { return .failure(.suspiciousHost) }
-        return .success(s)
+        // Codex-v1final fix: ALSO block IPv4-mapped IPv6 literals like
+        // `[::ffff:169.254.169.254]`. `canonicalIPv6` normalizes these as
+        // IPv6 but `blockedIPv6Canonical` doesn't include the IPv4-mapped
+        // forms of metadata endpoints. Extract the embedded IPv4 and check
+        // it against the blocked-IPv4 set.
+        if let mappedV4 = ipv4MappedFromIPv6(host),
+           blockedIPv4Numeric.contains(mappedV4) { return .failure(.suspiciousHost) }
+        // Architect-v1final fix: strip user:password@ credentials from the
+        // ACCEPTED URL before it's persisted. We never want auth credentials
+        // baked into the URL we'll later emit at .notice level (LogViewer,
+        // Console.app, anywhere). Credentials belong in the Keychain via
+        // Settings → Edit Auth, NOT in the URL itself.
+        var stripped = s
+        if let url2 = URL(string: stripped),
+           (url2.user != nil || url2.password != nil),
+           var comps = URLComponents(url: url2, resolvingAgainstBaseURL: false) {
+            comps.user = nil
+            comps.password = nil
+            if let out = comps.string { stripped = out }
+        }
+        return .success(stripped)
+    }
+
+    /// Returns the host-order numeric IPv4 embedded in an IPv4-mapped IPv6
+    /// literal (e.g. `::ffff:169.254.169.254`), or nil if not an IPv4-mapped
+    /// form. Used by `validate(_:)` to block `[::ffff:169.254.169.254]`-style
+    /// metadata-endpoint bypasses.
+    static func ipv4MappedFromIPv6(_ host: String) -> UInt32? {
+        var addr = in6_addr()
+        guard host.withCString({ inet_pton(AF_INET6, $0, &addr) == 1 }) else { return nil }
+        // IPv4-mapped IPv6 form: first 80 bits zero, next 16 are 0xFFFF, last 32 are IPv4.
+        let bytes = withUnsafeBytes(of: &addr) { Array($0.bindMemory(to: UInt8.self)) }
+        guard bytes.count == 16 else { return nil }
+        let firstTenZero = bytes[0..<10].allSatisfy { $0 == 0 }
+        let ffMarker = bytes[10] == 0xFF && bytes[11] == 0xFF
+        guard firstTenZero && ffMarker else { return nil }
+        // Bytes 12..15 are the IPv4 in network byte order. Convert to host-order
+        // numeric to match canonicalIPv4Numeric's output domain.
+        let v4 = (UInt32(bytes[12]) << 24)
+               | (UInt32(bytes[13]) << 16)
+               | (UInt32(bytes[14]) << 8)
+               |  UInt32(bytes[15])
+        return v4
     }
 
     /// Returns the host-order 32-bit numeric form of an IPv4 textual address using

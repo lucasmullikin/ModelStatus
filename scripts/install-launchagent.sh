@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-BUNDLE_ID="com.lucrativepictures.ModelStatus"
+BUNDLE_ID="com.lucasmullikin.ModelStatus"
 DST="$HOME/Library/LaunchAgents/${BUNDLE_ID}.plist"
 
 bold()  { printf "\033[1m%s\033[0m\n" "$*"; }

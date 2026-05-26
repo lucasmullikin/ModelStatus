@@ -87,6 +87,9 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItems(withTitles: Category.allCases.map { $0.rawValue })
         popup.translatesAutoresizingMaskIntoConstraints = false
+        // Accessibility-audit-v1final: VoiceOver would just announce "All"
+        // or "monitor" with no context about what's being filtered.
+        popup.setAccessibilityLabel("Log category filter")
         self.categoryPopup = popup
 
         let status = NSTextField(labelWithString: "0 entries")
@@ -98,6 +101,14 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
         self.refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
         self.copyButton = NSButton(title: "Copy All", target: nil, action: nil)
         self.exportButton = NSButton(title: "Export to .log file…", target: nil, action: nil)
+        // Accessibility-audit-v1final: tooltips + explicit a11y labels so
+        // VoiceOver users know what each generic-titled button does.
+        refreshButton.toolTip = "Reload log entries now."
+        refreshButton.setAccessibilityLabel("Refresh logs")
+        copyButton.toolTip = "Copy all visible log entries to the clipboard."
+        copyButton.setAccessibilityLabel("Copy all log entries to clipboard")
+        exportButton.toolTip = "Save log entries to a .log file."
+        exportButton.setAccessibilityLabel("Export logs to a file")
         for b in [refreshButton, copyButton, exportButton] {
             b.bezelStyle = .rounded
             b.translatesAutoresizingMaskIntoConstraints = false
@@ -287,11 +298,24 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
             } onCancel: {
                 fetchTask.cancel()
             }
-            guard let result else { return }
-            if Task.isCancelled { return }
+            // v0.2.1 fix: previously, when `result` was nil (fetch
+            // cancelled because a newer reload superseded this one) or when
+            // the token check failed, we returned silently leaving the
+            // statusLabel stuck on "Loading…". Now: if the fetch returned a
+            // valid result AND this is still the current token, apply it;
+            // otherwise leave the previously-displayed content alone but
+            // restore a non-Loading status so the user never sees a stale
+            // "Loading…" stuck state across the 2-second refresh window.
             guard let self else { return }
-            guard myToken == self.latestReloadToken else { return }
-            self.applyFetchResult(result)
+            if let result, myToken == self.latestReloadToken {
+                self.applyFetchResult(result)
+            } else if myToken == self.latestReloadToken {
+                // Our token is still current but fetch returned nil
+                // (cancellation). Just clear the Loading… text since a
+                // newer fetch is about to overwrite anyway.
+                self.statusLabel.stringValue = "Refreshing…"
+            }
+            // else: a newer token has been issued — let it handle the UI.
         }
     }
 
@@ -333,9 +357,18 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
     /// entirely (audit-round-3: a sentinel empty-but-successful FetchResult
     /// would otherwise clear the visible log view).
     nonisolated private static func fetchEntries(subsystem: String, category: Category) -> FetchResult? {
+        // v0.2.1 fix: `OSLogStore(scope: .currentProcessIdentifier)` returned
+        // ZERO entries on macOS 26.x with hardened-runtime signed builds,
+        // even though `OSLogStore.local()` with the same predicate returned
+        // 136+ entries from the same process. Tested via standalone Swift
+        // diagnostic in /tmp/test-oslog.swift. Switch to `.local()` which is
+        // also fine under the App Store sandbox — sandboxed apps can read
+        // their OWN process's entries from the local store; they just can't
+        // read other processes' entries (which we wouldn't want anyway).
+        // The subsystem predicate naturally scopes to our own logs.
         let store: OSLogStore
         do {
-            store = try OSLogStore(scope: .currentProcessIdentifier)
+            store = try OSLogStore.local()
         } catch {
             return FetchResult(
                 text: "",

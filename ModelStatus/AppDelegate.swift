@@ -1,5 +1,8 @@
 import AppKit
 import UserNotifications
+import OSLog
+
+private let appLogger = Logger(subsystem: ConfigManager.bundleIdentifier, category: "app")
 
 struct EjectInfo {
     let modelName: String
@@ -38,6 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var restartMonitoringTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        let instanceCount = ConfigManager.shared.instances.count
+        #if MODELSTATUS_APP_STORE
+        let buildVariant = "App Store (sandboxed)"
+        #else
+        let buildVariant = "direct download"
+        #endif
+        appLogger.notice("ModelStatus \(version, privacy: .public) (build \(build, privacy: .public)) launched — \(buildVariant, privacy: .public) — \(instanceCount) server(s) configured")
         statusIndicator = StatusIndicator()
         UNUserNotificationCenter.current().delegate = self
         // Only request notification permission lazily — when we actually attempt to post
@@ -126,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        appLogger.notice("ModelStatus terminating")
         // Idempotent — applicationShouldTerminate runs first, but this catches the
         // edge case where Will fires without Should (e.g. system logout w/o quit).
         NotificationCenter.default.removeObserver(self)
@@ -548,10 +561,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc private func showLogViewer() {
+        appLogger.notice("opening Log Viewer")
         LogViewerWindowController.shared.showWindow()
     }
 
     @objc private func exportDiagnosticBundle() {
+        appLogger.notice("exporting diagnostic bundle")
         // Audit-round-D46: a menu-bar-only app may have NO real windows when
         // the user triggers this. Anchoring a sheet to an invisible
         // `NSWindow()` produces an off-screen modal that can be unfocusable

@@ -99,24 +99,34 @@ enum Discovery {
     ]
 
     static func scan(timeoutPerProbe: TimeInterval = 1.5) async -> [DiscoveredServer] {
+        // v0.2.1: .notice level so Discovery activity shows in the in-app
+        // LogViewer. Without this the user clicks Discover and sees no
+        // record of the scan having run.
+        discoveryLogger.notice("scan started (LAN /24 + Tailscale peers)")
         async let lan = scanLocalSubnet(timeoutPerProbe: timeoutPerProbe)
         async let tail = scanTailscalePeers(timeoutPerProbe: timeoutPerProbe)
-        var combined = await lan
-        combined.append(contentsOf: await tail)
+        let lanResults = await lan
+        let tailResults = await tail
+        discoveryLogger.notice("scan results: LAN=\(lanResults.count), Tailscale=\(tailResults.count)")
+        var combined = lanResults
+        combined.append(contentsOf: tailResults)
         // Dedupe on the full identity tuple (host:port|kind|source). Matches the
         // semantics of `DiscoveredServer.id` and `==` so the three notions of
         // uniqueness stay aligned (audit-round-3).
         var seen = Set<String>()
-        return combined.filter { seen.insert($0.id).inserted }
+        let deduped = combined.filter { seen.insert($0.id).inserted }
+        discoveryLogger.notice("scan complete: \(deduped.count) unique server(s) discovered")
+        return deduped
     }
 
     // MARK: - LAN /24 scan
 
     private static func scanLocalSubnet(timeoutPerProbe: TimeInterval) async -> [DiscoveredServer] {
         guard let mySubnet = currentSubnetBase() else {
-            discoveryLogger.debug("no IPv4 found for en0/en1; skipping LAN scan")
+            discoveryLogger.notice("LAN scan skipped: no active IPv4 interface (en0/en1) found")
             return []
         }
+        discoveryLogger.notice("LAN scan: probing \(mySubnet).1-254 on common model-server ports")
         let hosts = (1...254).map { "\(mySubnet).\($0)" }
         return await probeHosts(hosts, source: .lan, timeoutPerProbe: timeoutPerProbe)
     }
@@ -172,7 +182,11 @@ enum Discovery {
 
     private static func scanTailscalePeers(timeoutPerProbe: TimeInterval) async -> [DiscoveredServer] {
         let tsPath = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-        guard FileManager.default.fileExists(atPath: tsPath) else { return [] }
+        guard FileManager.default.fileExists(atPath: tsPath) else {
+            discoveryLogger.notice("Tailscale scan skipped: /Applications/Tailscale.app not installed")
+            return []
+        }
+        discoveryLogger.notice("Tailscale scan: querying peers via `tailscale status --json`")
         // Security: verify the binary at that path is codesigned by Tailscale
         // before executing it. Audit-round-D17 known limitation: there is a
         // narrow TOCTOU window between this verifyCodeSignature() call and

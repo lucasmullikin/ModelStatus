@@ -128,7 +128,7 @@ final class WelcomeWindowController: NSWindowController {
 
         appendHeading(to: out, "Privacy and where your data lives")
         appendBullets(to: out, [
-            "Config: ~/Library/Preferences/com.lucrativepictures.ModelStatus.json (file mode 0600 — your user only).",
+            "Config: ~/Library/Preferences/com.lucasmullikin.ModelStatus.json (file mode 0600 — your user only).",
             "Auth tokens: macOS Keychain only, scoped to this device.",
             "Discovery scan: only when you click the Discover button. Never automatic.",
             "Network: only outbound traffic is to the servers you configure. No telemetry, no analytics, no phone-home, no crash reporting.",

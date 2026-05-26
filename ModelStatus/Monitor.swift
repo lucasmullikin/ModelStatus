@@ -49,11 +49,18 @@ actor Monitor {
     private let reachabilityContinuation: AsyncStream<(Instance, Bool)>.Continuation
 
     init() {
+        // Codex-v1final fix: bounded buffer (.bufferingNewest) so a slow or
+        // absent consumer can't grow memory unbounded. AppDelegate spawns a
+        // single MainActor consumer for each stream; if it ever falls behind
+        // (e.g. user opens Settings while many instances flap reachability),
+        // we keep only the most recent 16 events and drop older ones.
+        // 16 is generous for "newest poll cycle" semantics — the consumer
+        // only really cares about the latest state, not the full history.
         var statusCont: AsyncStream<[ServerStatus]>.Continuation!
-        statusEvents = AsyncStream { statusCont = $0 }
+        statusEvents = AsyncStream(bufferingPolicy: .bufferingNewest(16)) { statusCont = $0 }
         statusContinuation = statusCont
         var reachCont: AsyncStream<(Instance, Bool)>.Continuation!
-        reachabilityEvents = AsyncStream { reachCont = $0 }
+        reachabilityEvents = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { reachCont = $0 }
         reachabilityContinuation = reachCont
     }
 
@@ -72,6 +79,10 @@ actor Monitor {
         pollTask?.cancel()
         pollGeneration &+= 1
         let myGen = pollGeneration
+        // v0.2.1: .notice level so this shows in the in-app LogViewer (which
+        // reads OSLogStore — by default the store only persists .notice and
+        // above; .debug entries are filtered out).
+        logger.notice("polling started (generation \(myGen))")
         pollTask = Task {
             while !Task.isCancelled {
                 let ctx = await self.poll(generation: myGen)
@@ -88,6 +99,7 @@ actor Monitor {
         // Bump generation so any in-flight poll suspends-then-resumes with a
         // stale token and refuses to yield events or mutate state.
         pollGeneration &+= 1
+        logger.notice("polling stopped (generation \(self.pollGeneration))")
     }
 
     /// Returns the captured `PollContext` so the run-loop can use its `pollInterval`
@@ -133,8 +145,27 @@ actor Monitor {
             if state[s.instance.id]?.lastReachable != reachable {
                 state[s.instance.id, default: InstanceState()].lastReachable = reachable
                 reachabilityEvents.append((s.instance, reachable))
+                // v0.2.1: surface reachability transitions as .notice so users
+                // see them in the LogViewer. State changes are the events
+                // that matter most for "what's my server doing right now?"
+                // Architect-v1final defense-in-depth: scrub the URL before
+                // emitting at .public level — even though URLValidator now
+                // strips user:pass@ on instance creation, scrubURL belt-and-
+                // suspenders against any pre-v0.2.1 instance that bypassed
+                // validation OR a future regression that re-introduces
+                // credentials in the URL field.
+                logger.notice("\(s.instance.name, privacy: .public) (\(Anonymizer.scrubURL(s.instance.url), privacy: .public)) → \(reachable ? "reachable" : "UNREACHABLE", privacy: .public)")
             }
         }
+
+        // v0.2.1: per-cycle summary at .notice so the LogViewer reflects
+        // live activity. One line per poll cycle: how many instances, their
+        // aggregate state breakdown. Concise enough to not clutter the log.
+        let stateSummary = Dictionary(grouping: ordered, by: { $0.state })
+            .map { "\($0.value.count) \(String(describing: $0.key))" }
+            .sorted()
+            .joined(separator: ", ")
+        logger.notice("poll cycle: \(ordered.count) instances [\(stateSummary, privacy: .public)]")
 
         // Architect-D53 #43 (B): yield to AsyncStream continuations
         // synchronously from the actor. No actor hops between the generation
@@ -294,10 +325,15 @@ actor Monitor {
             if generation == pollGeneration {
                 state[instance.id, default: InstanceState()].detectedKind = p.kind
                 state[instance.id]?.detectionURL = instance.url
+                // v0.2.1: surface auto-detection so the user sees what
+                // backend the app picked. Only fires on first successful
+                // probe (subsequent polls hit the cached branch above).
+                logger.notice("auto-detected \(String(describing: p.kind), privacy: .public) for \(instance.name, privacy: .public) (\(Anonymizer.scrubURL(instance.url), privacy: .public))")
             }
             return p
         }
         // Fallback: try OpenAI generic so we at least report unreachable cleanly
+        logger.notice("auto-detect failed for \(instance.name, privacy: .public) (\(Anonymizer.scrubURL(instance.url), privacy: .public)) — falling back to OpenAI-generic")
         return OpenAIProvider()
     }
 
@@ -329,12 +365,17 @@ actor Monitor {
             logger.notice("eject not supported by provider \(String(describing: provider.kind), privacy: .public)")
             return
         }
+        logger.notice("eject model \(name, privacy: .public) on \(instance.name, privacy: .public)")
         await provider.ejectModel(name, on: instance, session: session)
     }
 
     func loadModel(name: String, on instance: Instance) async {
         let provider = await resolveProvider(for: instance, generation: pollGeneration)
-        guard provider.capabilities.contains(.loadModel) else { return }
+        guard provider.capabilities.contains(.loadModel) else {
+            logger.notice("load not supported by provider \(String(describing: provider.kind), privacy: .public)")
+            return
+        }
+        logger.notice("load model \(name, privacy: .public) on \(instance.name, privacy: .public)")
         await provider.loadModel(name, on: instance, session: session)
     }
 
@@ -378,22 +419,30 @@ actor Monitor {
         // Audit-round-D53-architect: route brew/open/pkill through the
         // LocalSystemAccess protocol — sandboxed builds become no-ops.
         let lsa = LocalSystemAccessProvider.current
+        logger.notice("\(start ? "starting" : "stopping") local Ollama")
         let brewPath = FileManager.default.fileExists(atPath: "/opt/homebrew/bin/brew")
             ? "/opt/homebrew/bin/brew"
             : (FileManager.default.fileExists(atPath: "/usr/local/bin/brew") ? "/usr/local/bin/brew" : nil)
 
         if let brew = brewPath {
             _ = await lsa.runShell(brew, args: ["services", start ? "start" : "stop", "ollama"], timeout: 12)
-            if await isLocalOllamaRunning() == start { return }
+            if await isLocalOllamaRunning() == start {
+                logger.notice("ollama \(start ? "started" : "stopped") via brew services")
+                return
+            }
         }
 
         if start {
             let appPath = "/Applications/Ollama.app"
             if FileManager.default.fileExists(atPath: appPath) {
                 _ = await lsa.runShell("/usr/bin/open", args: ["-g", appPath], timeout: 6)
+                logger.notice("ollama start fallback: opened \(appPath, privacy: .public)")
+            } else {
+                logger.notice("ollama start failed: neither brew nor /Applications/Ollama.app available")
             }
         } else {
             _ = await lsa.runShell("/usr/bin/pkill", args: ["-x", "ollama"], timeout: 6)
+            logger.notice("ollama stop fallback: pkill")
         }
     }
 }

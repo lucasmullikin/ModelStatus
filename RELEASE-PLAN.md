@@ -1,9 +1,9 @@
 # RELEASE-PLAN — ModelStatus v0.1.0-beta
 
 **Project:** ModelStatus (formerly OllamaStatus, renamed 2026-05-25)
-**Owner:** Lucrative Pictures LLC
+**Owner:** Lucas Mullikin (Individual Apple Developer Program enrollment, Team ID `ZFXWBW78LZ`)
 **Repo:** https://github.com/lucasmullikin/ModelStatus
-**Bundle ID:** com.lucrativepictures.ModelStatus
+**Bundle ID:** com.lucasmullikin.ModelStatus
 **License:** MIT
 **Target:** macOS 13+
 **Date:** 2026-05-25
@@ -112,7 +112,7 @@ All of the following shipped in this release and are present in the binary and s
 - **URL validation** — scheme validation (http/https only) plus a cloud-metadata blocklist (169.254.169.254 and equivalents) to prevent SSRF-class misconfigs
 - **4 MB response cap** — hard ceiling on provider API responses to prevent memory pressure from runaway servers
 - **0600 config file permissions** — config written with owner-only perms; checked on load
-- **`os.Logger` instrumentation** — structured logging throughout; visible in Console.app with subsystem `com.lucrativepictures.ModelStatus`
+- **`os.Logger` instrumentation** — structured logging throughout; visible in Console.app with subsystem `com.lucasmullikin.ModelStatus`
 - **MIT LICENSE, README, CHANGELOG, CONTRIBUTING, DESIGN.md** — full documentation set in repo root
 - **GitHub Actions** — CI build on push/PR (build + test) + release workflow triggered by `v*` tag (builds app, zips, computes sha256, attaches to GH Release)
 - **XCTest scaffold** — tests for URLValidator, Formatters, and ConfigManager; not 80% coverage yet, scaffold is the baseline for future expansion
@@ -187,7 +187,12 @@ Specific version labels and dates aren't promised — what's listed below is the
 - **GitHub Releases unsigned binary:** Free. Tonight = this tier. Users run `xattr -dr com.apple.quarantine` once. No account required.
 - **Homebrew Cask (own tap tonight, official cask later):** Free. Slightly smoother install. Still unsigned until notarization lands.
 - **Mac App Store (v1.0, target 2026-Q2):** Paid one-time purchase at **$6.99** (revised from $4.99 on 2026-05-26 after market comparison — Tot $4.99, Shortcut Bar $8.99, iPulse $9.99, MenubarX $14.99, Bartender 5 $16; $6.99 is the niche-technical sweet spot, signals "real tool" rather than impulse-cheap). **Free updates forever** — explicit selling point; no subscription, no upgrade fee for v1.1/v1.2/etc. Sandboxed via `MODELSTATUS_APP_STORE` compile flag + `SandboxedLocalSystemAccess` injection; automatic updates; no Gatekeeper dialogs; no `xattr` step. Trade-off relative to the direct-download build: client-process display, CPU/RSS, Tailscale discovery, and Start/Stop local Ollama are unavailable (sandbox can't exec `lsof` / `ps` / `brew` / `pkill`). HTTP polling, model lists, eject/load via API, and discovery via LAN-port-probe all keep working. Revenue funds ongoing development + the $99/yr Developer Program fee. Source-builders remain free forever via GitHub + Homebrew (strategy A confirmed 2026-05-26: keep the free OSS funnel; reassess at 90 days post-launch with real conversion data before considering App-Store-only strategies).
-- **Marketing framing:** "Two devs in the local-LLM weeds built this for themselves. We run 3+ LLM servers each (Ollama on a laptop, MLX on a Mac mini, vLLM behind Tailscale) and wanted one place to see them all. We use it every day. Free updates forever." Honest indie-hacker positioning — no borrowed authority, no fake "endorsed by Ollama" claims. The "we" is intentional: it signals "real users who eat their own dog food" without overpromising team size.
+- **Marketing framing (decided 2026-05-26):**
+  - **Core pitch:** "Two devs in the local-LLM weeds built this for themselves. We run 3+ LLM servers each (Ollama on a laptop, MLX on a Mac mini, vLLM behind Tailscale) and wanted one place to see them all. We use it every day."
+  - **Open-source + auditable angle:** "100% MIT-licensed, source on GitHub, read every line. Diagnostic bundle output is salted-SHA-256-anonymized; the regex is right there in `ModelStatus/Anonymizer.swift`. Build from source if you don't trust the binary. The App Store version is the same code, signed + sandboxed for convenience."
+  - **Community-built positioning:** "Buy the App Store version to support development. Read the source to understand what it does. File bugs, send PRs, fork it — we work with the community to build and ship features. Free updates forever; paid version funds the time."
+  - **Two-tier model:** Free + open OSS for tinkerers / developers / privacy-conscious users who'd rather `git clone && swift build`. $6.99 App Store for everyone who wants one-click install + sandbox-safety + auto-updates + to support the work.
+  - **No borrowed authority** — no fake "endorsed by Ollama" claims. The "we" signals real users eating their own dog food without overpromising team size.
 - **No subscriptions. No SaaS backend. No analytics. No cloud dependencies. No telemetry.**
 
 ---

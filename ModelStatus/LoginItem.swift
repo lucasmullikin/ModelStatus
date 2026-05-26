@@ -11,7 +11,7 @@ import os
 ///   required writing into `~/Library/LaunchAgents/`, which the sandbox
 ///   blocks. SMAppService is approved for sandboxed apps.
 /// - **No external plist file shipped in the .app.** The system records the
-///   registration; no `cp LaunchAgent/com.lucrativepictures.ModelStatus.plist
+///   registration; no `cp LaunchAgent/com.lucasmullikin.ModelStatus.plist
 ///   ~/Library/LaunchAgents/` step the user has to do by hand.
 /// - **No `launchctl bootstrap`.** SMAppService handles enable/disable
 ///   atomically.
@@ -92,17 +92,26 @@ enum LoginItem {
     static var failureHint: String {
         // SMAppService.mainApp.status values (macOS 13+):
         // .notRegistered, .enabled, .requiresApproval, .notFound
+        // Codex-v1final fix: `.notRegistered` is ALSO the normal off state,
+        // so a generic "Move ModelStatus.app to /Applications" message is
+        // misleading when the user has just un-toggled the checkbox. Only
+        // surface the move-to-/Applications hint when registration actually
+        // returned an error (caller distinguishes this via the bool return
+        // from enable()/disable()).
         switch SMAppService.mainApp.status {
         case .notRegistered:
-            return "Move ModelStatus.app to /Applications, then try again."
+            // After a successful disable() this is the expected state — no
+            // hint needed. After a failed enable() the caller should already
+            // have a more specific error to display via NSAlert.
+            return "Login item is currently disabled. If you expected it to be enabled, try again — and if that fails, make sure ModelStatus.app is in /Applications."
         case .requiresApproval:
             return "Approve ModelStatus in System Settings → General → Login Items."
         case .notFound:
-            return "ModelStatus.app must be installed in /Applications for this to work."
+            return "ModelStatus.app must be installed in /Applications for the system to find it at login."
         case .enabled:
             return ""
         @unknown default:
-            return "Unknown SMAppService status; check Console.app for errors."
+            return "Unknown SMAppService status; check Console.app under com.lucasmullikin.ModelStatus for errors."
         }
     }
 }

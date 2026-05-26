@@ -287,6 +287,7 @@ struct MLXProvider: Provider {
               http.statusCode == 200,
               let resp = try? JSONDecoder().decode(MLXModelsResponse.self, from: data),
               let entries = resp.data,
+              !entries.isEmpty,                                  // Codex-v1final: match check()/probe() — empty data is offline
               !entries.contains(where: { Self.idLooksLikeGGUF($0) }) else {
             return []
         }

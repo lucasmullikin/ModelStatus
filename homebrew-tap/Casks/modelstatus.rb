@@ -17,8 +17,8 @@ cask "modelstatus" do
   app "ModelStatus.app"
 
   zap trash: [
-    "~/Library/Preferences/com.lucrativepictures.ModelStatus.json",
-    "~/Library/LaunchAgents/com.lucrativepictures.ModelStatus.plist",
+    "~/Library/Preferences/com.lucasmullikin.ModelStatus.json",
+    "~/Library/LaunchAgents/com.lucasmullikin.ModelStatus.plist",
   ]
 
   caveats <<~EOS
@@ -30,8 +30,8 @@ cask "modelstatus" do
 
     To start at login:
 
-      cp $(brew --prefix)/Caskroom/modelstatus/#{version}/LaunchAgent/com.lucrativepictures.ModelStatus.plist \\
+      cp $(brew --prefix)/Caskroom/modelstatus/#{version}/LaunchAgent/com.lucasmullikin.ModelStatus.plist \\
          ~/Library/LaunchAgents/
-      launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.lucrativepictures.ModelStatus.plist
+      launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.lucasmullikin.ModelStatus.plist
   EOS
 end
