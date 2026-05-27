@@ -57,6 +57,13 @@ cp "$BIN_PATH/ModelStatus" "$APP/Contents/MacOS/ModelStatus"
 cp "ModelStatus/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# Copy any bundled Resources (app icon, etc.) into the .app's Resources/.
+# Installed by ./scripts/install-icon.sh and committed to ModelStatus/Resources/.
+if [[ -d "ModelStatus/Resources" ]]; then
+    cp -R "ModelStatus/Resources/"* "$APP/Contents/Resources/" 2>/dev/null || true
+    echo "→ copied Resources/ ($(ls ModelStatus/Resources/ | wc -l | tr -d ' ') items)"
+fi
+
 if [[ -n "$SIGN_IDENTITY" ]]; then
     echo "→ codesign with: $SIGN_IDENTITY (entitlements: $ENTITLEMENTS_FILE)"
     codesign --deep --force --options runtime \
