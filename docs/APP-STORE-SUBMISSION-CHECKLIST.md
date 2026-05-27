@@ -65,6 +65,50 @@ classification required.
 `https://modelstatus.app/privacy` — the GitHub URL is sufficient
 for initial submission.)
 
+The privacy policy explicitly covers:
+- Apple App Privacy nutrition labels (all 14 categories, all "Data Not Collected")
+- California CCPA / CPRA (§ 1798.100–.135) — all eight enumerated rights
+- EU GDPR Articles 12–22 + Article 27(2)(a) representative exemption + Article 77 complaint right
+- UK GDPR (Data Protection Act 2018)
+- Virginia VCDPA, Colorado CPA, Connecticut CTDPA, Utah UCPA, Texas TDPSA, Oregon OCPA, Montana CDPA, Tennessee TIPA
+- COPPA (children under 13)
+- Data Controller identity + verifiable contact channel
+- Local data scope, retention, and complete deletion procedure
+
+## Privacy Manifest (`PrivacyInfo.xcprivacy`)
+
+**Required by Apple as of Spring 2024.** Bundled into the app at
+`Contents/Resources/PrivacyInfo.xcprivacy`. Verify after each build with:
+
+```
+plutil -p build/ModelStatus.app/Contents/Resources/PrivacyInfo.xcprivacy
+```
+
+| Key | Value |
+|---|---|
+| `NSPrivacyTracking` | `false` |
+| `NSPrivacyTrackingDomains` | `[]` |
+| `NSPrivacyCollectedDataTypes` | `[]` |
+| `NSPrivacyAccessedAPITypes` | `[{ type: NSPrivacyAccessedAPICategoryUserDefaults, reasons: ["CA92.1"] }]` |
+
+**Required-reason API audit** (re-run before every release):
+
+```
+grep -rn "UserDefaults\|attributesOfItem\|systemUptime\|volumeAvailableCapacity\|activeInputModes" ModelStatus/ --include="*.swift"
+```
+
+- ✅ `NSUserDefaults` — declared (reason `CA92.1`, used by UpdateChecker
+  + WelcomeWindow for own-app bookkeeping)
+- ✅ File timestamps — not used
+- ✅ System boot time — not used
+- ✅ Disk space — not used
+- ✅ Active keyboard — not used (macOS app)
+
+If new required-reason APIs are added in future versions, declare them
+in `ModelStatus/Resources/PrivacyInfo.xcprivacy` BEFORE building the
+App Store archive, or App Store Connect will reject the build with
+ITMS-91053.
+
 ## Pricing & Availability
 
 | Field | Value |

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        ModelStatus Privacy Manifest
+        ============================
+
+        Required by Apple App Store as of Spring 2024. Declares:
+
+          1. NSPrivacyTracking — Whether the app or any linked SDK
+             performs tracking as defined by the App Tracking
+             Transparency framework. ModelStatus does not track.
+          2. NSPrivacyTrackingDomains — Internet domains that
+             perform tracking. None.
+          3. NSPrivacyCollectedDataTypes — Categories of data the
+             app or any linked SDK collects. None.
+          4. NSPrivacyAccessedAPITypes — "Required reason" API
+             categories used by the app, with declared reason codes.
+             ModelStatus uses NSUserDefaults only, for its own
+             internal bookkeeping (update-notification dedup,
+             welcome-window first-launch flag).
+
+        See: https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
+        See: https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api
+    -->
+
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <!--
+                NSPrivacyAccessedAPICategoryUserDefaults
+                Reason CA92.1: "Access info from same app, per documentation."
+
+                Usage in ModelStatus:
+                  - UpdateChecker.swift: store last-seen GitHub release tag,
+                    last check timestamp, dismissed/snoozed version list to
+                    avoid re-notifying for the same release.
+                  - WelcomeWindow.swift: persist a "has shown" boolean so the
+                    first-run welcome window doesn't reappear.
+
+                All reads/writes target the app's own bundle ID. No data
+                is shared with or read by any other app or SDK.
+            -->
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
