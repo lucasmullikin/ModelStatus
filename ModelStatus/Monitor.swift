@@ -91,7 +91,15 @@ actor Monitor {
         let age = Date().timeIntervalSince(sessionCreatedAt)
         guard age >= 300 else { return }  // 5 min
         logger.notice("rotating URLSession (age \(Int(age))s) to flush DNS + connection caches")
-        session.invalidateAndCancel()
+        // v1.0 fix (Codex-audited): finishTasksAndInvalidate lets in-flight
+        // tasks complete normally before the session is torn down. The
+        // previous invalidateAndCancel would kill user-triggered actions
+        // (ejectModel, loadModel, availableModels) that share this session
+        // if they happened to be in-flight when the 5-min rotation fired —
+        // spurious failures every 5 min from the user's perspective.
+        // New tasks (starting with the next probe in this poll cycle) use
+        // the freshly-created session below.
+        session.finishTasksAndInvalidate()
         session = Monitor.makeSession()
         sessionCreatedAt = Date()
     }

@@ -315,10 +315,18 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
         // completion. `withTaskCancellationHandler` is the structured way
         // to forward cancellation.
         reloadTask = Task { [weak self] in
-            // v1.0 fix: clear in-flight flag when this Task exits (success,
-            // cancellation, or early return). MainActor.assumeIsolated is
-            // safe because the outer Task is MainActor-isolated.
-            defer { MainActor.assumeIsolated { self?.inFlightReload = false } }
+            // v1.0 fix (Codex-audited): clear in-flight flag when this Task
+            // exits — but ONLY if this Task is still the most recent reload.
+            // Otherwise a cancelled older Task's defer would clear the flag
+            // while a newer reload is still in flight, allowing the next
+            // auto-refresh tick to cancel it (reintroducing the very race
+            // this guard prevents).
+            defer {
+                MainActor.assumeIsolated {
+                    guard let s = self, s.latestReloadToken == myToken else { return }
+                    s.inFlightReload = false
+                }
+            }
             let fetchTask = Task.detached(priority: .userInitiated) {
                 LogViewerWindowController.fetchEntries(subsystem: subsystem, category: category)
             }

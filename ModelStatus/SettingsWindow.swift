@@ -452,11 +452,27 @@ final class SettingsWindowController: NSWindowController {
 
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
+            // v1.0 fix (Codex-audited): addInstance can return nil if persist
+            // to ~/Library/Preferences fails (disk full, permission, etc.).
+            // The single-add path in this file already checks the return value
+            // and surfaces a Keychain warning; the bulk-discovery path was
+            // silently dropping failures. Collect the failures and surface
+            // them in one alert so the user knows what didn't save.
+            var failed: [String] = []
             for (cb, r) in newCheckboxes where cb.state == .on {
-                ConfigManager.shared.addInstance(name: r.suggestedName, url: r.url, kind: r.kind)
+                if ConfigManager.shared.addInstance(name: r.suggestedName, url: r.url, kind: r.kind) == nil {
+                    failed.append("\(r.suggestedName) (\(r.url))")
+                }
             }
             self?.loadInstances()
             self?.onConfigChanged?()
+            if !failed.isEmpty, let window = self?.window {
+                let warn = NSAlert()
+                warn.messageText = "Couldn't save \(failed.count) server\(failed.count == 1 ? "" : "s")"
+                warn.informativeText = "These discovered servers were selected but couldn't be persisted (config write may have failed):\n\n  • \(failed.joined(separator: "\n  • "))\n\nThe others were saved. Try Add manually if this recurs."
+                warn.alertStyle = .warning
+                warn.beginSheetModal(for: window, completionHandler: nil)
+            }
         }
     }
 
