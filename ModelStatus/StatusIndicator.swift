@@ -4,14 +4,38 @@ import AppKit
 final class StatusIndicator {
     let statusItem: NSStatusItem
 
+    /// v1.0: brain-silhouette template image extracted from the new app icon.
+    /// Loaded from Bundle.main (ModelStatus/Resources/MenuBarIcon.png).
+    /// macOS auto-tints (black for light menu bar, white for dark). Falls
+    /// back to the 🧠 emoji if the image isn't bundled (e.g. dev builds
+    /// before scripts/install-icon.sh ran).
+    private static let templateImage: NSImage? = {
+        guard let img = NSImage(named: "MenuBarIcon") else { return nil }
+        img.isTemplate = true
+        return img
+    }()
+
     init() {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let img = Self.templateImage, let button = statusItem.button {
+            // Place the brain glyph image to the LEFT of the colored status
+            // dots (the attributedTitle text). Image + title side-by-side.
+            button.image = img
+            button.imagePosition = .imageLeft
+            button.imageHugsTitle = true
+        }
         updateStatuses([])
     }
 
     func updateStatuses(_ statuses: [ServerStatus]) {
         let title = NSMutableAttributedString()
-        title.append(NSAttributedString(string: "\u{1F9E0} ", attributes: [.font: NSFont.systemFont(ofSize: 12)]))
+        // Emoji fallback ONLY when the bundled template image isn't found
+        // (e.g. dev source-tree builds without ./scripts/install-icon.sh having
+        // run). When the image IS present, NSStatusItem.button.image renders
+        // it to the left and we skip the prefix to avoid double-rendering.
+        if Self.templateImage == nil {
+            title.append(NSAttributedString(string: "\u{1F9E0} ", attributes: [.font: NSFont.systemFont(ofSize: 12)]))
+        }
 
         let items: [(String, NSColor)] = statuses.isEmpty
             ? ConfigManager.shared.instances.map { _ in ("?", NSColor.systemGray) }
