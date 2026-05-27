@@ -28,11 +28,24 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
     // Monotonically increasing token: the only fetch allowed to apply results
     // is the one whose token matches `latestReloadToken` when it completes.
     private var latestReloadToken: UInt64 = 0
+    // v1.0 fix: true while a reload Task is in flight (between reload() entry
+    // and the outer Task's defer completion). Auto-refresh ticks skip if
+    // true to prevent racing slow fetches. Manual Refresh button click sets
+    // force=true and bypasses this guard so the user always gets a fresh
+    // attempt regardless of in-flight state.
+    private var inFlightReload: Bool = false
     // Constants used from both MainActor and a detached fetch task — mark
     // nonisolated so the off-main fetch can read them without crossing actors.
     nonisolated private static let maxEntries = 1000
     nonisolated private static let lookbackSeconds: TimeInterval = -3600
-    nonisolated private static let refreshInterval: TimeInterval = 2.0
+    // v1.0 fix: was 2.0s. On macOS 26.x with hardened-runtime signed builds,
+    // OSLogStore.local() + getEntries can take 3-8s when scanning a busy
+    // system log. With a 2s timer, every auto-refresh cancelled the previous
+    // in flight before it could complete — the token-mismatch path then
+    // never restored UI, leaving "Loading…" stuck forever. 5s gives ample
+    // headroom AND the inFlightReload guard below prevents racing entirely.
+    // Manual Refresh button click bypasses the guard (user-initiated).
+    nonisolated private static let refreshInterval: TimeInterval = 5.0
 
     // Category options drive the predicate. `provider` is special-cased to
     // match every `provider.*` subcategory via BEGINSWITH.
@@ -191,7 +204,12 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
         // single-registration form.
         let t = Timer(timeInterval: Self.refreshInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
-            MainActor.assumeIsolated { self.reload() }
+            // v1.0 fix: auto-refresh must NOT cancel an in-flight reload —
+            // if fetchEntries is slow, we'd race and leave UI stuck on
+            // "Loading…". Only schedule a refresh if no fetch is in flight.
+            // Manual Refresh button click goes through reload(force: true)
+            // which always restarts.
+            MainActor.assumeIsolated { self.reload(force: false) }
         }
         RunLoop.main.add(t, forMode: .common)
         refreshTimer = t
@@ -213,7 +231,7 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Actions
 
     @objc private func categoryChanged() { reload() }
-    @objc private func refreshTapped() { reload() }
+    @objc private func refreshTapped() { reload(force: true) }
 
     @objc private func copyTapped() {
         let text = textView.string
@@ -273,7 +291,13 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Reload
 
-    private func reload() {
+    private func reload(force: Bool = false) {
+        // v1.0 fix: auto-refresh (force=false) skips if a reload is already
+        // in flight. This prevents the race where a slow fetch on macOS 26.x
+        // gets repeatedly cancelled by the next auto-refresh tick before it
+        // can complete, leaving UI stuck on "Loading…". Manual Refresh
+        // button click sets force=true and always restarts.
+        if !force, inFlightReload { return }
         let category = selectedCategory
         let subsystem = ConfigManager.bundleIdentifier
         statusLabel.stringValue = "Loading…"
@@ -283,6 +307,7 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
         reloadTask?.cancel()
         latestReloadToken &+= 1
         let myToken = latestReloadToken
+        inFlightReload = true
 
         // Audit-round-D40: propagate cancellation INTO the detached task so
         // a stale OSLog scan stops doing work when superseded. The previous
@@ -290,6 +315,10 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
         // completion. `withTaskCancellationHandler` is the structured way
         // to forward cancellation.
         reloadTask = Task { [weak self] in
+            // v1.0 fix: clear in-flight flag when this Task exits (success,
+            // cancellation, or early return). MainActor.assumeIsolated is
+            // safe because the outer Task is MainActor-isolated.
+            defer { MainActor.assumeIsolated { self?.inFlightReload = false } }
             let fetchTask = Task.detached(priority: .userInitiated) {
                 LogViewerWindowController.fetchEntries(subsystem: subsystem, category: category)
             }
@@ -397,6 +426,11 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
             )
         }
 
+        // v1.0: time the scan so the UI can show "took 4.2s" when slow.
+        // OSLogStore.local() on macOS 26.x with hardened-runtime signed
+        // builds can take 3-8s; if we see >10s we may need to chunk the
+        // lookback further.
+        let scanStart = Date()
         // Rolling buffer — never holds more than maxEntries OSLogEntryLog values.
         // Audit-round-4: ring buffer with explicit head/count instead of
         // `removeFirst()` so each insertion is O(1) regardless of how many
@@ -441,6 +475,26 @@ final class LogViewerWindowController: NSWindowController, NSWindowDelegate {
             lines.append("\(ts) [\(lvl)] [\(cat)] \(e.composedMessage)")
         }
 
+        let scanSeconds = Date().timeIntervalSince(scanStart)
+        // v1.0: surface the empty-but-no-error case clearly. On macOS 26.x +
+        // hardened runtime, OSLogStore.local() may return zero entries for
+        // some signing/entitlement combos even when logs exist (Console.app
+        // sees them, our process cannot). Tell the user what's going on
+        // instead of just showing a blank text view.
+        if rolling.isEmpty {
+            return FetchResult(
+                text: "No log entries found for subsystem \"\(subsystem)\" in the last hour.\n\n"
+                    + "If you expect entries here, try Console.app:\n"
+                    + "  1. Open Console.app (in /Applications/Utilities)\n"
+                    + "  2. Click \"Start streaming\"\n"
+                    + "  3. Search for: subsystem:\(subsystem)\n\n"
+                    + "Scan took \(String(format: "%.2f", scanSeconds))s.",
+                count: 0,
+                totalMatched: 0,
+                truncated: false,
+                error: nil
+            )
+        }
         return FetchResult(
             text: lines.joined(separator: "\n"),
             count: rolling.count,
