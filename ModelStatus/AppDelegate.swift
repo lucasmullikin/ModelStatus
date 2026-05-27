@@ -63,6 +63,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self, selector: #selector(openSettings),
             name: .welcomeWindowRequestedSettings, object: nil
         )
+        // v1.0 fix: when any of our windows (Settings, Welcome, Log Viewer,
+        // Discovery) becomes the main window, promote activation policy to
+        // .regular so the app appears in Cmd+Tab and the user can return to
+        // it after switching away. When the last app window closes, demote
+        // back to .accessory so the Dock icon disappears (matches the
+        // menu-bar-utility model). LSUIElement=true in Info.plist keeps the
+        // initial state as agent (no Dock icon at launch).
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeMainNotification, object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let w = note.object as? NSWindow,
+                  self?.isAppPrimaryWindow(w) == true else { return }
+            self?.promoteToRegularActivation()
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Run on next tick so the closing window finishes tearing down
+            // before we count visible windows.
+            DispatchQueue.main.async { self?.maybeDemoteActivation() }
+        }
         rebuildMenu()
         startMonitoring()
 
@@ -690,6 +713,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func muted(_ text: String) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+    }
+
+    // MARK: v1.0 activation policy promotion (Cmd+Tab support)
+
+    /// True if `w` is a primary app window we should promote activation for.
+    /// Filters out NSStatusBar windows, menu panels, popovers, and untitled
+    /// utility windows — anything that shouldn't trigger a Dock-icon promotion.
+    private func isAppPrimaryWindow(_ w: NSWindow) -> Bool {
+        guard w.canBecomeMain else { return false }
+        // NSPanel subclasses (popovers, palettes) don't count.
+        if w is NSPanel { return false }
+        // Empty-title or system-overlay windows don't count.
+        if w.title.isEmpty { return false }
+        return true
+    }
+
+    private func promoteToRegularActivation() {
+        guard NSApp.activationPolicy() != .regular else { return }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Check if any primary app window is still visible. If not, demote back
+    /// to .accessory so the Dock icon disappears (matches the menu-bar-only
+    /// model). Run on the next runloop tick so the just-closed window's
+    /// isVisible has already flipped to false.
+    private func maybeDemoteActivation() {
+        let hasOpen = NSApp.windows.contains { w in
+            w.isVisible && isAppPrimaryWindow(w)
+        }
+        guard !hasOpen, NSApp.activationPolicy() != .accessory else { return }
+        NSApp.setActivationPolicy(.accessory)
     }
 }
 
