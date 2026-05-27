@@ -375,39 +375,84 @@ final class SettingsWindowController: NSWindowController {
     private func presentDiscoveryResults(_ results: [DiscoveredServer]) {
         guard let window = self.window else { return }
 
+        // v1.0 fix #59: compare each discovered server against the existing
+        // config so the user can see "Local Mac → already added" instead of
+        // accidentally creating duplicate entries. URL-equality is the
+        // reliable comparison; we can't tell that 127.0.0.1:8080 and
+        // 192.168.1.50:8080 are the same physical server without resolving,
+        // so we just match exact URL strings — which catches the
+        // discover-twice case without false positives.
+        let existingURLs = Set(ConfigManager.shared.instances.map { $0.url })
+        let alreadyAdded = results.filter { existingURLs.contains($0.url) }
+        let newOnly = results.filter { !existingURLs.contains($0.url) }
+
+        // v1.0 fix #59 (second half): empty-result UX. Previously we said
+        // "Nothing responded" which is misleading when the user has servers
+        // configured but they all show as already-added (or no NEW ones
+        // found). Distinguish the three cases: nothing at all, all already
+        // added, or some new.
         if results.isEmpty {
             let alert = NSAlert()
             alert.messageText = "No model servers found"
-            alert.informativeText = "Scanned local /24 + Tailscale peers on common ports (11434, 1234, 8080, 8000, 5001). Nothing responded with /api/tags or /v1/models."
+            alert.informativeText = "Scanned local /24 + Tailscale peers on common ports (11434, 1234, 8080, 8000, 10240, 5001). Nothing responded with /api/tags or /v1/models.\n\nIf you expected to find a server, check that:\n  • The server is running and bound to 0.0.0.0 (not just 127.0.0.1)\n  • Your firewall isn't blocking the port\n  • For Tailscale: /Applications/Tailscale.app is installed"
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window, completionHandler: nil)
+            return
+        }
+
+        if newOnly.isEmpty {
+            // All discovered servers are already in the config — common case
+            // when the user clicks Discover after already adding everything.
+            let names = alreadyAdded.map { $0.url }.joined(separator: "\n  • ")
+            let alert = NSAlert()
+            alert.messageText = "All \(alreadyAdded.count) discovered server\(alreadyAdded.count == 1 ? " is" : "s are") already added"
+            alert.informativeText = "Discovery found these servers, but they're all in your config already:\n\n  • \(names)"
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window, completionHandler: nil)
             return
         }
 
         let alert = NSAlert()
-        alert.messageText = "Found \(results.count) server\(results.count == 1 ? "" : "s")"
-        alert.informativeText = "Pick which to add."
+        let newCount = newOnly.count
+        let totalCount = results.count
+        if alreadyAdded.isEmpty {
+            alert.messageText = "Found \(newCount) new server\(newCount == 1 ? "" : "s")"
+            alert.informativeText = "Pick which to add."
+        } else {
+            alert.messageText = "Found \(newCount) new server\(newCount == 1 ? "" : "s") (\(alreadyAdded.count) already added)"
+            alert.informativeText = "Pick which new ones to add. Already-added servers are shown grayed out for reference."
+        }
         alert.addButton(withTitle: "Add Selected")
         alert.addButton(withTitle: "Cancel")
 
-        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 380, height: CGFloat(results.count) * 26))
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 460, height: CGFloat(totalCount) * 26))
         stack.orientation = .vertical
         stack.spacing = 4
         stack.alignment = .leading
 
-        var checkboxes: [NSButton] = []
-        for r in results {
+        // Render NEW results first (checked by default), then already-added
+        // (disabled, unchecked, grayed out) for reference. Keep a parallel
+        // array of (checkbox, server) tuples for the only-checked-new ones.
+        var newCheckboxes: [(NSButton, DiscoveredServer)] = []
+        for r in newOnly {
             let cb = NSButton(checkboxWithTitle: "\(r.suggestedName) — \(r.url) [\(r.source.rawValue)]",
                               target: nil, action: nil)
             cb.state = .on
-            checkboxes.append(cb)
+            newCheckboxes.append((cb, r))
+            stack.addArrangedSubview(cb)
+        }
+        for r in alreadyAdded {
+            let cb = NSButton(checkboxWithTitle: "✓ \(r.suggestedName) — \(r.url) [\(r.source.rawValue)] (already added)",
+                              target: nil, action: nil)
+            cb.state = .off
+            cb.isEnabled = false
             stack.addArrangedSubview(cb)
         }
         alert.accessoryView = stack
 
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
-            for (i, r) in results.enumerated() where checkboxes[i].state == .on {
+            for (cb, r) in newCheckboxes where cb.state == .on {
                 ConfigManager.shared.addInstance(name: r.suggestedName, url: r.url, kind: r.kind)
             }
             self?.loadInstances()
