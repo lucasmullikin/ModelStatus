@@ -64,13 +64,37 @@ actor Monitor {
         reachabilityContinuation = reachCont
     }
 
-    private let session: URLSession = {
+    // v1.0 fix: URLSession's internal DNS + connection-pool caches can hold
+    // negative state indefinitely when a previously-reachable server has a
+    // transient mDNS / Wi-Fi / sleep-wake hiccup. The session keeps polling
+    // but every probe fails the same way because nothing forces a fresh
+    // resolution. Curl from the same machine works because each invocation
+    // creates a brand-new resolver state. Fix: time-bound the session to 5
+    // minutes; after that, invalidate and recreate. Bounds stuck-state
+    // recovery to ≤ 5 min without per-instance failure tracking complexity.
+    private var session: URLSession = Monitor.makeSession()
+    private var sessionCreatedAt: Date = Date()
+
+    private static func makeSession() -> URLSession {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 8
         c.timeoutIntervalForResource = 10
         c.waitsForConnectivity = false
         return URLSession(configuration: c)
-    }()
+    }
+
+    /// Called at the top of each poll cycle. If the URLSession is older than
+    /// the rotation threshold, invalidate it (cancels in-flight tasks and
+    /// flushes connection + DNS caches) and create a fresh one. New probes
+    /// in this cycle use the fresh session.
+    private func recycleSessionIfStale() {
+        let age = Date().timeIntervalSince(sessionCreatedAt)
+        guard age >= 300 else { return }  // 5 min
+        logger.notice("rotating URLSession (age \(Int(age))s) to flush DNS + connection caches")
+        session.invalidateAndCancel()
+        session = Monitor.makeSession()
+        sessionCreatedAt = Date()
+    }
 
     func startPolling() {
         // Don't reset `state` — preserve memoized lastActive/detectedKind/etc.
@@ -108,6 +132,10 @@ actor Monitor {
     /// callback emission OR state mutation so a wedged-then-resumed older cycle
     /// can't overwrite the newer cycle's view of the world.
     private func poll(generation: UInt64) async -> PollContext {
+        // v1.0: rotate URLSession every 5 min to flush DNS + connection caches.
+        // Must run BEFORE any probe in this cycle so a stuck session can't
+        // poison the entire poll.
+        recycleSessionIfStale()
         // ConfigManager is @MainActor (v0.2 step B); a single MainActor hop per cycle
         // captures everything we need for the rest of poll() to run actor-local.
         let ctx = await MainActor.run { ConfigManager.shared.snapshotForPoll() }
