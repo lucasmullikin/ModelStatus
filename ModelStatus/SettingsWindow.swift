@@ -19,7 +19,7 @@ final class SettingsWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 540),
+            contentRect: NSRect(x: 0, y: 0, width: 660, height: 540),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false
         )
@@ -46,15 +46,22 @@ final class SettingsWindowController: NSWindowController {
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
 
-        for (id, title, width, editable, tip) in [
-            ("name", "Name", 110, true, "Friendly label shown in the menu bar."),
-            ("url",  "URL",  230, true, "http:// or https:// with port. Example: http://192.168.1.50:11434"),
-            ("kind", "Kind", 110, false, "Provider type. 'Auto' detects from the URL on first poll."),
-            ("auth", "Auth", 60, false, "🔒 Set = an Authorization header is stored in the Keychain.")
-        ] as [(String, String, CGFloat, Bool, String)] {
+        // v1.0: column widths sized to fit common content without manual
+        // resizing. URL especially needs ~310pt to show real-world hostnames
+        // like "http://macmini-m4-pro.local:11434" without truncation. Each
+        // column also gets minWidth/maxWidth so the user can still adjust
+        // but defaults look clean on first open.
+        for (id, title, width, minW, maxW, editable, tip) in [
+            ("name", "Name", 130, 80,  220, true,  "Friendly label shown in the menu bar."),
+            ("url",  "URL",  310, 180, 480, true,  "http:// or https:// with port. Example: http://192.168.1.50:11434"),
+            ("kind", "Kind", 110, 80,  160, false, "Provider type. 'Auto' detects from the URL on first poll."),
+            ("auth", "Auth", 70,  50,  120, false, "🔒 Set = an Authorization header is stored in the Keychain.")
+        ] as [(String, String, CGFloat, CGFloat, CGFloat, Bool, String)] {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             col.title = title
             col.width = width
+            col.minWidth = minW
+            col.maxWidth = maxW
             col.isEditable = editable
             col.headerToolTip = tip
             tableView.addTableColumn(col)
