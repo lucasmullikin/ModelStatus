@@ -63,6 +63,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self, selector: #selector(openSettings),
             name: .welcomeWindowRequestedSettings, object: nil
         )
+        // v1.0 fix: install a proper main menu bar. LSUIElement=true apps
+        // don't get an application menu by default, which means Cmd+C / Cmd+V
+        // / Cmd+X / Cmd+A do NOT work in NSTextField inputs (e.g., the
+        // Settings → Add sheet's URL and Authorization-header fields).
+        // Without an Edit menu in NSApp.mainMenu, the responder chain has
+        // nowhere to route the standard text-editing actions and they
+        // silently no-op. This makes the app feel broken for any user who
+        // tries to paste an API key.
+        installMainMenu()
         // v1.0 fix: when any of our windows (Settings, Welcome, Log Viewer,
         // Discovery) becomes the main window, promote activation policy to
         // .regular so the app appears in Cmd+Tab and the user can return to
@@ -713,6 +722,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func muted(_ text: String) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+    }
+
+    // MARK: v1.0 main menu (Edit menu for Cmd+C/V/X/A support)
+
+    /// Install NSApp.mainMenu with App + Edit menus. The Edit menu's actions
+    /// use AppKit's standard responder-chain selectors (cut:, copy:, paste:,
+    /// selectAll:, undo:, redo:) — when a text field is first responder
+    /// and the user presses Cmd+V, AppKit routes paste: down the chain and
+    /// it works. Without this menu, the chain is broken and text editing
+    /// commands silently fail in every input field in the app.
+    private func installMainMenu() {
+        let main = NSMenu()
+
+        // App menu (first entry — its title is always the app name and is
+        // displayed in the menu bar's leftmost position).
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        appMenu.addItem(NSMenuItem(title: "About ModelStatus",
+                                   action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                                   keyEquivalent: ""))
+        appMenu.addItem(.separator())
+        let hide = NSMenuItem(title: "Hide ModelStatus",
+                              action: #selector(NSApplication.hide(_:)),
+                              keyEquivalent: "h")
+        appMenu.addItem(hide)
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "Quit ModelStatus",
+                                   action: #selector(NSApplication.terminate(_:)),
+                                   keyEquivalent: "q"))
+
+        // Edit menu — the actual fix for "Cmd+V doesn't paste".
+        let editItem = NSMenuItem()
+        editItem.title = "Edit"
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        let undo = NSMenuItem(title: "Undo",
+                              action: Selector(("undo:")),
+                              keyEquivalent: "z")
+        editMenu.addItem(undo)
+        let redo = NSMenuItem(title: "Redo",
+                              action: Selector(("redo:")),
+                              keyEquivalent: "Z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut",
+                                    action: #selector(NSText.cut(_:)),
+                                    keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy",
+                                    action: #selector(NSText.copy(_:)),
+                                    keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste",
+                                    action: #selector(NSText.paste(_:)),
+                                    keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All",
+                                    action: #selector(NSText.selectAll(_:)),
+                                    keyEquivalent: "a"))
+
+        NSApp.mainMenu = main
     }
 
     // MARK: v1.0 activation policy promotion (Cmd+Tab support)
