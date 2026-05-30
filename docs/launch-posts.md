@@ -1,8 +1,14 @@
-# Launch posts — ready-to-paste drafts (v0.2.0)
+# Launch posts — ready-to-paste drafts (v1.0.0)
 
 Pick a venue, copy the block, post when ready. **Don't post the same thing simultaneously to multiple Reddit subs** — looks spammy. Stagger by a day; see `LAUNCH-SCHEDULE.md` for timing.
 
-**Why v0.2 not v0.1:** v0.1.0-beta shipped to GitHub but was never posted anywhere. v0.2.0 is the genuine first launch — same scope but with a dedicated MLX provider, OSLog viewer, privacy-scrubbed diagnostic-bundle export, and 50+ rounds of security/correctness hardening behind it. Better launch moment.
+**Context:** ModelStatus v1.0.0 was approved by Apple App Store Review on 2026-05-29. Three install paths:
+
+- **Mac App Store** ($6.99, sandboxed, auto-updates): https://apps.apple.com/app/modelstatus/id6774341064
+- **Homebrew tap** (free, unsandboxed direct download with Start/Stop Local Ollama + Diagnostic Bundle export): `brew tap lucasmullikin/tap && brew install --cask modelstatus`
+- **Source** (MIT): https://github.com/lucasmullikin/ModelStatus
+
+Pricing is split because Apple's sandbox forbids local-process inspection (lsof/ps/shell exec). App Store users get sandboxed-safe HTTP polling + LAN discovery + auto-updates; direct-download users get the full feature set free. Same source tree, two compile-time targets.
 
 ---
 
@@ -10,7 +16,7 @@ Pick a venue, copy the block, post when ready. **Don't post the same thing simul
 
 **Title** (Reddit-native bracket prefix, fits in 300-char limit):
 
-> [Tool] ModelStatus — macOS menu bar app for monitoring multiple local LLM servers at once (Ollama / LM Studio / vLLM / MLX / llama.cpp)
+> [Tool] ModelStatus — macOS menu bar app for monitoring multiple local LLM servers at once (Ollama / LM Studio / vLLM / MLX / llama.cpp). Now on the Mac App Store.
 
 **Body**:
 
@@ -18,174 +24,204 @@ Pick a venue, copy the block, post when ready. **Don't post the same thing simul
 I run Ollama on my Mac Studio, MLX on a Mac mini, and a vLLM box behind Tailscale. Wanted one place to see what's loaded where, how much VRAM is in use, who's hitting each server, and whether anything is generating right now. Nothing existed that did multi-instance + multi-backend, so I built it.
 
 ModelStatus lives in your menu bar. One colored dot per server:
-- 🟢 active (models loaded)
-- 🔵 generating (only for Ollama — it's the only backend that exposes that)
-- 🟡 idle (reachable, nothing loaded)
-- 🔴 unreachable
 
-Click for the full per-server view: model names, VRAM, eject/load from the menu (Ollama + LM Studio supported), CPU/memory of the local server process, which process is currently talking to it (Python? curl? Claude?), last-active time, request latency.
+  🟢 active — model loaded, ready to serve
+  🔵 generating — actively producing tokens right now (vLLM /metrics-driven)
+  🟡 idle — server up but no model loaded in RAM
+  🔴 unreachable — server down or unreachable
 
-Network discovery: click a button, scans your LAN /24 + Tailscale peers for common model-server ports (11434, 1234, 8080, 8000), shows you a list with checkboxes.
+Click the brain icon to see per-server detail: model name, VRAM, latency, last-active timestamp, client process. Eject or load models from the menu — no terminal needed.
 
-MLX support is first-class as of v0.2: dedicated provider with HuggingFace cache enumeration, scheme-aware default port (https://localhost works), local-process argv verification so a non-MLX endpoint on the same port can't accidentally expose your MLX cache.
+Backends supported:
+  • Ollama
+  • LM Studio
+  • vLLM (with /metrics-driven Generating state detection)
+  • MLX (mlx_lm.server, mlx-omni-server)
+  • llama.cpp
+  • Any OpenAI-compatible HTTP API
 
-Open source, MIT, Swift/AppKit. No telemetry, no analytics, no cloud, no account. macOS 13+. Built for myself; sharing because every time I described it people asked where to get it.
+Two paths to install:
 
-  brew tap lucasmullikin/tap
-  brew install --cask modelstatus
-  # Then once:
-  xattr -dr com.apple.quarantine /Applications/ModelStatus.app
+  Mac App Store ($6.99, sandboxed, auto-updates):
+  https://apps.apple.com/app/modelstatus/id6774341064
 
-Source + releases: https://github.com/lucasmullikin/ModelStatus
+  Homebrew (free, MIT, unsandboxed, full feature set):
+  brew tap lucasmullikin/tap && brew install --cask modelstatus
 
-v0.2.0. Built on macOS, runs on Apple Silicon. Bug reports very welcome.
+Source: https://github.com/lucasmullikin/ModelStatus
+
+Privacy: zero telemetry, zero analytics, zero crash reporters. The only outbound network is to the model servers you configure yourself + once-per-launch GitHub releases check (sandboxed build skips this). Privacy manifest declares Data Not Collected for all 14 Apple categories.
+
+v1.0.0. Built on macOS, runs on Apple Silicon. Bug reports welcome.
 ```
 
 ---
 
-## Show HN  ← post Wed (after r/LocalLLaMA settles)
+## r/macapps  ← post Wed 10am ET (24h after r/LocalLLaMA)
 
-**Title** (≤80 chars):
+**Title**:
+
+> ModelStatus — menu bar app for monitoring local AI model servers (Ollama, LM Studio, vLLM, MLX). $6.99 on the Mac App Store.
+
+**Body**:
+
+```
+Just shipped v1.0.0 to the Mac App Store after a couple of months of polish. Built it for myself because I was tab-switching constantly between three Macs to see which models were loaded where.
+
+What it does:
+  • Multi-server monitoring from one menu bar icon
+  • Per-server state (active, generating, idle, unreachable)
+  • Live VRAM, latency, last-active timestamp
+  • Discover button auto-finds servers on your local network + Tailscale peers
+  • Authorization headers stored in Keychain (for tunneled/remote servers)
+  • Notifications when a server goes down or comes back
+
+Two builds, same source:
+
+  Mac App Store — $6.99, sandboxed, auto-updates via App Store:
+  https://apps.apple.com/app/modelstatus/id6774341064
+
+  Direct download via Homebrew — free, MIT, unsandboxed, keeps the
+  Start/Stop Local Ollama + Diagnostic Bundle export features that
+  sandbox forbids:
+  brew tap lucasmullikin/tap && brew install --cask modelstatus
+
+Source: https://github.com/lucasmullikin/ModelStatus
+
+Privacy: ModelStatus collects nothing. No telemetry, no analytics, no crash reports. Privacy manifest matches. Privacy policy: https://github.com/lucasmullikin/ModelStatus/blob/main/docs/PRIVACY.md
+
+Why $6.99 on App Store but free direct download:
+- Apple's sandbox forbids the lsof/ps process inspection features (clientProcess display, CPU/RSS readout, Start/Stop Local Ollama)
+- The sandboxed App Store build degrades gracefully — HTTP polling, model lists, eject/load, LAN discovery all work; the local-process-inspection features are hidden
+- For users who want the full feature set, the direct-download build is forever free
+- For everyone else (auto-updates, sandbox isolation, no Gatekeeper friction), App Store at $6.99
+```
+
+---
+
+## Hacker News (Show HN)
+
+**Title** (Show HN format, ≤80 chars):
 
 > Show HN: ModelStatus – macOS menu bar app for monitoring local LLM servers
 
 **Body**:
 
 ```
-Built this because I have Ollama on my laptop, MLX on a Mac mini, and a remote vLLM box behind Tailscale — and there's no single tool that shows me what's loaded on each, how much VRAM is in use, and who's actually hitting them right now.
+ModelStatus is a macOS menu bar utility for monitoring local AI model servers — Ollama, LM Studio, vLLM, MLX, llama.cpp, anything OpenAI-compatible. One server icon per instance with colored-dot state at a glance, per-server detail when you click in.
 
-ModelStatus puts a 🧠 in your menu bar with one colored dot per server (active / generating / idle / unreachable). Click for details: loaded models, VRAM, CPU, who's connected (via lsof for local instances), last-active time, response latency.
+I run Ollama on my Mac Studio, MLX on a Mac mini, and a vLLM box behind Tailscale. Wanted one place to see what's loaded where. Built this for myself, sharing because friends kept asking.
 
-Auto-detects which kind of backend each URL is (Ollama → /api/ps, LM Studio → /api/v0/models, vLLM → /metrics, MLX → /v1/models + argv inspection, anything else → /v1/models). Eject + load models from the menu where the backend supports it. Network discovery scans your /24 and Tailscale peers for known model-server ports.
+Pricing & licensing is split deliberately:
 
-A few things worth mentioning for HN:
+- $6.99 on the Mac App Store: https://apps.apple.com/app/modelstatus/id6774341064 — sandboxed, auto-updates, less feature-rich (sandbox forbids lsof/ps for process inspection)
+- Free direct download via Homebrew: `brew tap lucasmullikin/tap && brew install --cask modelstatus` — Developer ID signed + notarized, full feature set, MIT source
 
-- Swift, AppKit, no dependencies (no Sparkle, no Alamofire — Foundation only)
-- All polling is async/await against an actor-isolated `Monitor`; @MainActor `ConfigManager` for UI safety
-- Diagnostic bundle export with salted-SHA-256 hostname anonymization (salt in Keychain), URL/credential redaction, symlink-resistant zip staging
-- URL validator canonicalizes octal/hex/decimal/shortened IPv4 + compressed IPv6, blocks cloud metadata endpoints, link-local, Tailscale CGNAT, RFC 1918
-- DNS-rebinding pre-resolution guard via getaddrinfo, no-redirect URLSession delegate, 4 MB streaming response cap
-- Unsandboxed by default because the local telemetry needs lsof/ps; v0.2 introduced a LocalSystemAccess protocol so a future App Store sandboxed target degrades gracefully (HTTP polling continues, local-process inspection returns nil)
-- Adhoc-signed for now; Apple Developer enrollment is next
-
-50+ rounds of Codex audit-fix iteration + 1 architect outside-review pass behind v0.2. The code's been hardened more than the surface area would suggest.
-
-MIT, no telemetry, no account, no cloud:
-
-  brew tap lucasmullikin/tap
-  brew install --cask modelstatus
-  xattr -dr com.apple.quarantine /Applications/ModelStatus.app
+Same codebase, two compile-time targets (`MODELSTATUS_APP_STORE` flag swaps in a sandboxed `LocalSystemAccess` provider that returns nil for syscall-based inspection).
 
 Source: https://github.com/lucasmullikin/ModelStatus
+Privacy policy: https://github.com/lucasmullikin/ModelStatus/blob/main/docs/PRIVACY.md (zero data collection, no telemetry, full CCPA/CPRA + GDPR + 8 US state law compliance)
+
+Stack: Swift 5.9, AppKit, Foundation, CryptoKit, OSLog. Audited by Codex + Claude Code's `architect` and `security-reviewer` agents.
+
+Happy to answer questions about the App Store sandbox dance, the dual-build setup, or the Discovery LAN-scan implementation.
 ```
 
 ---
 
-## r/macapps  ← post Thu (after Show HN settles)
-
-**Title**:
-
-> ModelStatus — Free menu bar app for monitoring local AI model servers (Ollama, LM Studio, vLLM, MLX)
-
-**Body**:
+## Twitter / X
 
 ```
-Quick share. I built ModelStatus because I run multiple local AI model servers — Ollama on the Mac Studio, MLX on a Mac mini, sometimes vLLM on a Linux box behind Tailscale — and I wanted one place to see what's loaded where, how much memory is being used, and whether anything is actively running.
+Just shipped ModelStatus v1.0 to the Mac App Store.
 
-It's a menu bar app. One colored dot per server: green = active with models loaded, blue = generating right now (Ollama only — others don't expose that state), yellow = reachable but idle, red = down. Click to see model names, VRAM, CPU, and what process is currently hitting each local server.
+Menu bar app for monitoring local AI servers — Ollama, LM Studio, vLLM, MLX, llama.cpp. One colored dot per instance with VRAM, latency, generating-now state.
 
-Some indie-Mac-tool-specific notes:
-- Pure Swift / AppKit. No Catalyst, no Electron, no SwiftUI workarounds. 1.4 MB binary.
-- No telemetry, no analytics, no account, no cloud.
-- macOS 13+ (Ventura). Apple Silicon native arm64.
-- MIT license. Forever free for direct download; future paid App Store version planned to fund development but the source stays free.
-- Currently unsigned (Apple Developer enrollment in progress). You'll need to run `xattr -dr com.apple.quarantine /Applications/ModelStatus.app` once after install.
+App Store: $6.99 sandboxed + auto-updates
+Homebrew: free, full feature set, MIT
 
-Install:
-
-  brew tap lucasmullikin/tap && brew install --cask modelstatus
-
-Source + releases: https://github.com/lucasmullikin/ModelStatus
-
-v0.2.0. Built it for myself; sharing because friends kept asking where to get it.
+apps.apple.com/app/modelstatus/id6774341064
+github.com/lucasmullikin/ModelStatus
 ```
 
 ---
 
-## Twitter / X thread  ← optional, post Tue evening alongside Reddit
+## Mastodon / Bluesky
 
-**Tweet 1** (hook):
+(Same as Twitter but break into thread because of post-length limits)
 
-> Just shipped ModelStatus v0.2 🧠
->
-> macOS menu bar app for monitoring every local LLM server you're running at once — Ollama, LM Studio, vLLM, MLX, llama.cpp.
->
-> Free, MIT, no telemetry.
->
-> brew tap lucasmullikin/tap && brew install --cask modelstatus
->
-> https://github.com/lucasmullikin/ModelStatus
+**Post 1**:
 
-**Tweet 2** (screenshot):
+```
+Shipped ModelStatus v1.0 to the Mac App Store today 🎉
 
-> One brain 🧠, one colored dot per server. Green = active, blue = generating (Ollama only — it's the only backend that exposes generation state), yellow = idle, red = down. Click to see what's loaded, how much VRAM, who's hitting it.
->
-> [attach docs/screenshots/dropdown.png]
+Menu bar utility for monitoring local AI model servers — Ollama, LM Studio, vLLM, MLX, llama.cpp, any OpenAI-compatible HTTP API.
 
-**Tweet 3** (network discovery + MLX):
+apps.apple.com/app/modelstatus/id6774341064
+```
 
-> Built-in LAN + Tailscale peer discovery scans for common model-server ports (11434, 1234, 8080, 8000). v0.2 adds a dedicated MLX provider with HuggingFace cache enumeration + argv-based local-process verification.
+**Post 2** (reply to Post 1):
 
-**Tweet 4** (privacy + open source):
+```
+Two install paths, same source:
 
-> No telemetry, no account, no cloud. Diagnostic bundle export is salted-SHA-256-anonymized — hostnames and credentials never leave your machine unscrambled. Auth headers live in Keychain only.
->
-> 50+ rounds of audit-fix iteration before v0.2. Source: https://github.com/lucasmullikin/ModelStatus
+📱 Mac App Store ($6.99, sandboxed, auto-updates)
+🍺 brew tap lucasmullikin/tap && brew install --cask modelstatus (free, MIT, full feature set)
 
-**Tweet 5** (tagging — last reply so it doesn't dominate the thread):
+Privacy: zero telemetry, zero analytics, manifest matches. Source: github.com/lucasmullikin/ModelStatus
+```
 
-> Works with @ollama, @LMStudioAI, @vllm_project, llama.cpp, MLX, and anything else that speaks `/v1/models`. Auto-detects the backend type per URL.
->
-> Bug reports → GitHub issues.
+**Post 3** (reply to Post 2):
+
+```
+Why I split it:
+
+Apple's sandbox forbids lsof/ps. The sandboxed App Store build degrades gracefully (HTTP polling + model lists + eject/load all work). For users who want process inspection + Start/Stop Local Ollama + Diagnostic Bundle export, the direct-download Homebrew build keeps everything, free.
+```
 
 ---
 
-## Ollama community integrations PR (status: ALREADY OPEN)
+## Awesome lists (PRs)
 
-**PR**: https://github.com/ollama/ollama/pull/16291 — opened 2026-05-25, still pending merge.
-**v0.2 refinement comment added**: 2026-05-26.
+For each awesome-list PR, the listing line should be a single bullet pointing at the GitHub repo (NOT the App Store URL — awesome lists are for tools, not products).
 
-No further action needed unless the maintainers respond.
+### `awesome-ollama`
+
+Add under "Tools" or "Monitoring":
+
+```markdown
+- [ModelStatus](https://github.com/lucasmullikin/ModelStatus) - macOS menu bar app for monitoring multiple local LLM servers at once (Ollama, LM Studio, vLLM, MLX, llama.cpp). One status dot per server with live VRAM, latency, and generating-now state. Also on the [Mac App Store](https://apps.apple.com/app/modelstatus/id6774341064).
+```
+
+### `awesome-llm-tools` / `awesome-local-llm`
+
+```markdown
+- [ModelStatus](https://github.com/lucasmullikin/ModelStatus) — macOS menu bar app for monitoring multiple local AI model servers (Ollama, vLLM, MLX, etc.). MIT + Mac App Store.
+```
+
+### `awesome-macos`
+
+```markdown
+- [ModelStatus](https://github.com/lucasmullikin/ModelStatus) - Menu bar app for monitoring local AI model servers (Ollama, LM Studio, vLLM, MLX, llama.cpp). Mac App Store + free Homebrew.
+```
 
 ---
 
-## Awesome-list submissions
+## Press / blog reach-outs (optional, lower priority than community posts)
 
-PR target list:
-- https://github.com/jaywcjlove/awesome-mac → "Applications" → "Menu Bar Tools" (or "AI" if it exists)
-- https://github.com/iCHAIT/awesome-macOS → "Productivity" or "Utilities"
-- https://github.com/Hannibal046/Awesome-LLM → "Tooling" or "UI / GUI"
-- (if it exists) any awesome-ollama list — search GitHub
+Post the community channels first, see organic traction, only reach out to publications if there's something interesting to write about (e.g. a particularly clever sandbox dance, or an unusual privacy story).
 
-**Shared blurb** (alphabetize in target list):
+- daringfireball.net — link-list culture, send Markdown summary with one-line pitch
+- macstories.net — full reviews, send the App Store link + a paragraph + 2 screenshots
+- 9to5mac.com / appleinsider.com — AI-on-Mac angle, mention price + sandbox split
+- macworld.com — review queue
 
-```
-- [ModelStatus](https://github.com/lucasmullikin/ModelStatus) — Free, open-source macOS menu bar app for monitoring multiple local LLM servers (Ollama, LM Studio, vLLM, MLX, llama.cpp). Multi-instance, auto-provider-detect, LAN + Tailscale discovery, no telemetry.
-```
+---
 
-**PR title pattern**:
+## Anti-patterns — what NOT to do
 
-> Add ModelStatus to <section name>
-
-**PR body template**:
-
-```
-Adds ModelStatus to <section>.
-
-ModelStatus is a free, open-source (MIT) macOS menu bar app for monitoring multiple local LLM servers — Ollama, LM Studio, vLLM, MLX, llama.cpp, and any OpenAI-compatible API. Multi-instance, auto-provider-detect, LAN + Tailscale discovery. Pure Swift/AppKit, no dependencies, no telemetry, no account.
-
-- Source: https://github.com/lucasmullikin/ModelStatus
-- Install: `brew tap lucasmullikin/tap && brew install --cask modelstatus`
-
-No code change to the awesome-list itself beyond the one-line addition.
-```
+- **Don't** post the same thread simultaneously to 3 subreddits + Show HN + Twitter. Stagger.
+- **Don't** rewrite history about "v1 launch" if v0.2.0 already shipped through Homebrew. Be honest: "v1 = first App Store release, source available since v0.1."
+- **Don't** ask for upvotes. Reddit + HN will detect and remove. Just post.
+- **Don't** respond defensively to "why $6.99 for a menu bar app?" — explain the value (auto-updates + sandbox + Apple's payment infrastructure) and remind them the source is free.
+- **Don't** promise an Android/iOS/Windows/Linux version unless you're committed. Easier to add later than walk back.
+- **Don't** post on a Friday afternoon. Tuesday or Wednesday morning ET catches the best US + EU window.
