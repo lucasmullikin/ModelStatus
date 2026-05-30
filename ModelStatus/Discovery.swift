@@ -115,8 +115,84 @@ enum Discovery {
         // uniqueness stay aligned (audit-round-3).
         var seen = Set<String>()
         let deduped = combined.filter { seen.insert($0.id).inserted }
-        discoveryLogger.notice("scan complete: \(deduped.count) unique server(s) discovered")
-        return deduped
+        // v1.0.1: filter out link-local IPs (RFC 3927 for IPv4, RFC 4291 for
+        // IPv6) and addresses that match this machine's own interfaces.
+        // Without this filter, the LAN scan sometimes surfaces:
+        //   • 169.254.X.Y (IPv4 auto-config — these are dead-end addresses)
+        //   • fe80::... (IPv6 link-local — same)
+        //   • The user's OWN Tailscale ULA reflecting back via mDNS
+        // The user reports these as ghost entries that look like servers but
+        // can't actually be reached. Filter them out at the source.
+        let ownIPs = ownInterfaceAddresses()
+        let filtered = deduped.filter { !Self.shouldFilterOut(host: $0.host, ownIPs: ownIPs) }
+        let dropped = deduped.count - filtered.count
+        if dropped > 0 {
+            discoveryLogger.notice("scan complete: \(filtered.count) unique server(s) discovered (filtered out \(dropped) link-local/self)")
+        } else {
+            discoveryLogger.notice("scan complete: \(filtered.count) unique server(s) discovered")
+        }
+        return filtered
+    }
+
+    /// v1.0.1: True if a discovered host should be filtered from results
+    /// because it's a link-local address (dead-end) OR matches one of this
+    /// Mac's own interface addresses (the user's own machine reflecting back
+    /// via mDNS shouldn't be presented as a "server to add").
+    ///
+    /// Pure function — accepts the `ownIPs` set as a parameter so it's
+    /// testable without mocking the interface-enumeration step.
+    static func shouldFilterOut(host: String, ownIPs: Set<String>) -> Bool {
+        let h = host.lowercased()
+        // Loopback aliases — defensive; the LAN/Tailscale scans shouldn't
+        // produce these but filter them if they ever leak through.
+        if h == "127.0.0.1" || h == "localhost" || h == "::1" { return true }
+        // IPv4 link-local 169.254.0.0/16 — RFC 3927. These are auto-config
+        // addresses assigned when DHCP fails; never useful for a server.
+        if h.hasPrefix("169.254.") { return true }
+        // IPv6 link-local fe80::/10 — RFC 4291. Same reasoning.
+        if h.hasPrefix("fe80:") { return true }
+        // Strip square brackets if present (URL-style IPv6) before checking
+        // against own IPs. Discovered hosts shouldn't have brackets but
+        // be defensive.
+        let stripped = h.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        // Self-IP match — the user's OWN Tailscale ULA, or any other address
+        // configured on a local interface.
+        if ownIPs.contains(stripped) { return true }
+        return false
+    }
+
+    /// v1.0.1: Enumerate IPv4 + IPv6 addresses configured on any local UP
+    /// interface. Used to filter Discovery results so the user's own Mac
+    /// doesn't appear as a "discovered server" via mDNS reflection.
+    ///
+    /// More permissive than `currentSubnetBase()`: includes loopback,
+    /// utun (Tailscale), bridge0, awdl0, etc. — we want EVERY address this
+    /// machine answers to, not just the routable LAN one.
+    private static func ownInterfaceAddresses() -> Set<String> {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
+        defer { freeifaddrs(ifaddr) }
+        var addrs = Set<String>()
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let cur = ptr {
+            defer { ptr = cur.pointee.ifa_next }
+            guard let sockaddr = cur.pointee.ifa_addr else { continue }
+            let family = sockaddr.pointee.sa_family
+            guard family == AF_INET || family == AF_INET6 else { continue }
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(sockaddr,
+                           socklen_t(sockaddr.pointee.sa_len),
+                           &hostname, socklen_t(hostname.count),
+                           nil, 0, NI_NUMERICHOST) == 0 {
+                let ip = String(cString: hostname)
+                // Strip IPv6 zone suffix (e.g. "fe80::1%en0" → "fe80::1") so
+                // string equality against bracket-stripped discovered hosts
+                // works regardless of the interface scope.
+                let bare = ip.split(separator: "%").first.map(String.init) ?? ip
+                addrs.insert(bare.lowercased())
+            }
+        }
+        return addrs
     }
 
     // MARK: - LAN /24 scan
