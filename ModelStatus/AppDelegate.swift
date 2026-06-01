@@ -822,10 +822,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 @main
 struct ModelStatusApp {
     static func main() {
+        // Headless CLI path: `ModelStatus status [--json]` / `--help`. Runs a
+        // single poll cycle (or prints help) and exits without ever creating
+        // the menu bar app. Unknown args fall through to .gui so macOS-injected
+        // launch flags don't hijack normal startup.
+        switch StatusCLI.parse(CommandLine.arguments) {
+        case .help:
+            print(StatusCLI.helpText())
+            exit(0)
+        case .status(let json):
+            let code = runCLI { await StatusCLI.run(json: json) }
+            exit(code)
+        case .gui:
+            break
+        }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
         app.run()
     }
+
+    /// Bridges the async `StatusCLI.run` to the synchronous `main()` entry
+    /// point. A RunLoop-pumped wait keeps Monitor's URLSession + actor
+    /// machinery alive until the single poll completes.
+    private static func runCLI(_ body: @escaping () async -> Int32) -> Int32 {
+        let box = CLIResultBox()
+        Task { @MainActor in
+            box.code = await body()
+            CFRunLoopStop(CFRunLoopGetMain())
+        }
+        CFRunLoopRun()
+        return box.code
+    }
+}
+
+private final class CLIResultBox {
+    var code: Int32 = 0
 }

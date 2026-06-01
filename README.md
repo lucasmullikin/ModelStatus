@@ -129,6 +129,22 @@ For remote tunneled instances that need an auth header, select the row and click
 
 The blue "Generating" dot is **only** shown for Ollama, which exposes inference state. Other providers don't, so we don't lie — they stay green Active even during generation.
 
+## Command line
+
+The same binary doubles as a headless CLI — handy for scripts, dashboards, and CI checks without the menu bar.
+
+```bash
+ModelStatus status          # one poll cycle of every configured server (text)
+ModelStatus status --json   # same, as JSON for piping into jq
+ModelStatus --help          # usage
+```
+
+`status` reads the same config the app uses, polls each server once, prints the result, and exits (15s ceiling so an unreachable host can't hang it). With the App Store / Homebrew install, invoke the binary inside the bundle:
+
+```bash
+/Applications/ModelStatus.app/Contents/MacOS/ModelStatus status --json | jq '.[] | {name, state}'
+```
+
 ## Configuration
 
 File: `~/Library/Preferences/com.lucasmullikin.ModelStatus.json` (mode 0600)
