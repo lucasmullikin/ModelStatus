@@ -135,7 +135,7 @@ final class WelcomeWindowController: NSWindowController {
         ])
 
         appendHeading(to: out, "Why this app exists")
-        appendBody(to: out, "If you run more than one AI model server at once — laptop Ollama + Mac mini MLX + a remote vLLM box — there’s no menu-bar tool that monitors all of them. ModelStatus is that tool. Open source (MIT), no account, no cloud, no telemetry. Built by Lucrative Pictures LLC. Source on GitHub.\n")
+        appendBody(to: out, "If you run more than one AI model server at once — laptop Ollama + Mac mini MLX + a remote vLLM box — there’s no menu-bar tool that monitors all of them. ModelStatus is that tool. Open source (MIT), no account, no cloud, no telemetry. Built by Lucas Mullikin. Source on GitHub.\n")
 
         return out
     }

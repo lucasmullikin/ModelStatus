@@ -40,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// Audit-round-D9.
     private var restartMonitoringTask: Task<Void, Never>?
 
+    /// Guards the Guideline 2.1 first-run loopback probe so it runs at most
+    /// once per launch.
+    private var didRunFirstLaunchDetect = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
@@ -97,6 +101,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         rebuildMenu()
         startMonitoring()
+
+        // Guideline 2.1 first-run adoption. Nothing is seeded any more, so if
+        // the list is empty we ask this Mac what is actually running and adopt
+        // it. Runs whenever the list is empty rather than once-ever, so a user
+        // who installs Ollama after first launch is picked up next time — the
+        // probe is seven loopback ports with a 1s timeout, which is cheap.
+        if ConfigManager.shared.instances.isEmpty, !didRunFirstLaunchDetect {
+            didRunFirstLaunchDetect = true
+            Task { @MainActor [weak self] in
+                let found = await Discovery.probeLoopback()
+                guard let self, !self.isTerminating else { return }
+                var adopted = 0
+                for d in found where !ConfigManager.shared.instances.contains(where: { $0.url == d.url }) {
+                    // DiscoveredServer.suggestedName is built for LAN hosts and
+                    // reads "127.0.0.1 (Ollama)" for a loopback hit — the first
+                    // thing a new user sees, and it looks like a debug artefact.
+                    let name = "\(d.kind.displayName) on this Mac"
+                    if ConfigManager.shared.addInstance(name: name, url: d.url, kind: d.kind) != nil {
+                        adopted += 1
+                    }
+                }
+                appLogger.notice("first-run adoption: \(adopted, privacy: .public) server(s) added")
+                if adopted > 0 {
+                    // Same stop/reset/start sequence Settings uses, so polling
+                    // picks up a config that changed underneath it.
+                    let m = self.monitor
+                    await m.stopPolling()
+                    guard !self.isTerminating else { return }
+                    self.currentStatuses = []
+                    self.statusIndicator.updateStatuses([])
+                    self.capabilitiesCache.reset()
+                    self.availableModelsCache.reset()
+                    self.startMonitoring()
+                }
+                self.rebuildMenu()
+            }
+        }
 
         // Background update check 5s after launch (lets polling settle first).
         // App Store rejection 2026-06-09, Guideline 2.4.5(vii): "The app updates
@@ -233,7 +274,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(styledItem("Model Status", font: .boldSystemFont(ofSize: 14)))
         menu.addItem(.separator())
 
-        if currentStatuses.isEmpty {
+        if ConfigManager.shared.instances.isEmpty {
+            // Guideline 2.1: an empty app must still explain itself. This is
+            // what a reviewer with no model server installed now sees, in place
+            // of the old permanently-unreachable seeded entry.
+            menu.addItem(styledItem("No AI server found yet", font: .systemFont(ofSize: 13, weight: .medium)))
+            menu.addItem(styledItem("Looked on this Mac for Ollama, LM Studio,", font: .systemFont(ofSize: 11)))
+            menu.addItem(styledItem("vLLM, MLX and OpenAI-compatible servers.", font: .systemFont(ofSize: 11)))
+            menu.addItem(.separator())
+            let addServer = NSMenuItem(title: "Add a Server…", action: #selector(openSettings), keyEquivalent: "")
+            addServer.target = self
+            menu.addItem(addServer)
+            let howTo = NSMenuItem(title: "How do I set this up?", action: #selector(showWelcome), keyEquivalent: "")
+            howTo.target = self
+            menu.addItem(howTo)
+        } else if currentStatuses.isEmpty {
             for inst in ConfigManager.shared.instances {
                 menu.addItem(headerItem(icon: "?", color: .systemGray, name: inst.name, text: "Checking..."))
             }

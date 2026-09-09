@@ -87,8 +87,14 @@ struct AppConfig: Codable {
     /// pre-v1.0.1: stay visible as "unreachable" indefinitely, never auto-pruned.
     var autoManageDormant: Bool
 
+    /// No seeded instance. The old default hard-coded `Local` at Ollama's
+    /// default port, which on a machine without Ollama could only ever render
+    /// as a permanent red ✗ — the first thing App Review saw, and the basis of
+    /// the Guideline 2.1 "App Completeness" rejection on 2026-06-09. First
+    /// launch now probes loopback and adopts whatever is actually running;
+    /// if nothing is, the menu says so and offers a next step.
     static let `default` = AppConfig(
-        instances: [Instance(name: "Local", url: "http://127.0.0.1:11434", kind: .ollama)],
+        instances: [],
         pollInterval: 5.0,
         notifyOnStateChange: false,
         compactMode: false,

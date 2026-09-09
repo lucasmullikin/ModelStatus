@@ -36,11 +36,16 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertFalse(decoded.compactMode)
     }
 
-    func testDefaultIsLocalhostOllama() {
+    /// Replaces testDefaultIsLocalhostOllama. The default used to seed
+    /// `Local` at http://127.0.0.1:11434, which on a machine without Ollama
+    /// could only ever render as a permanent red ✗ — the basis of Apple's
+    /// Guideline 2.1 rejection on 2026-06-09. First launch now probes loopback
+    /// (Discovery.probeLoopback) and adopts what is actually running, so the
+    /// default must seed NOTHING.
+    func testDefaultSeedsNoInstances() {
         let d = AppConfig.default
-        XCTAssertEqual(d.instances.count, 1)
-        XCTAssertEqual(d.instances[0].url, "http://127.0.0.1:11434")
-        XCTAssertEqual(d.instances[0].kind, .ollama)
+        XCTAssertTrue(d.instances.isEmpty,
+                      "A seeded instance reintroduces the permanently-unreachable first-run state Apple rejected.")
         XCTAssertEqual(d.pollInterval, 5.0)
     }
 

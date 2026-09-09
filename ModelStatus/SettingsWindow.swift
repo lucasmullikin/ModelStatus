@@ -185,8 +185,20 @@ final class SettingsWindowController: NSWindowController {
         githubButton.toolTip = "Open the project on GitHub."
         githubButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(githubButton)
+        // Guideline 2.4.5(vii): the App Store build carries no route to a page
+        // that serves downloadable builds. Direct downloads keep the button.
+        #if MODELSTATUS_APP_STORE
+        githubButton.isHidden = true
+        #endif
 
-        NSLayoutConstraint.activate([
+        // With the GitHub button hidden in the App Store build, pinning Quick
+        // Start to its leading edge would leave a gap at the window edge.
+        #if MODELSTATUS_APP_STORE
+        let quickStartTrailing = quickStartButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
+        #else
+        let quickStartTrailing = quickStartButton.trailingAnchor.constraint(equalTo: githubButton.leadingAnchor, constant: -8)
+        #endif
+        NSLayoutConstraint.activate([quickStartTrailing] + [
             instancesLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             instancesLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
 
@@ -244,7 +256,6 @@ final class SettingsWindowController: NSWindowController {
             githubButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             githubButton.centerYAnchor.constraint(equalTo: authorLabel.centerYAnchor),
 
-            quickStartButton.trailingAnchor.constraint(equalTo: githubButton.leadingAnchor, constant: -8),
             quickStartButton.centerYAnchor.constraint(equalTo: authorLabel.centerYAnchor)
         ])
     }

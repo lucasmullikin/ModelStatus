@@ -87,6 +87,24 @@ enum Discovery {
         (5001,  .openAI)      // text-generation-webui
     ]
 
+    /// First-run auto-detect. Probes THIS MACHINE ONLY, on the same ports
+    /// Discovery already knows about.
+    ///
+    /// Deliberately not `scan()`: a /24 sweep triggers the macOS local-network
+    /// permission prompt and reaches other people's machines, so it must stay
+    /// behind an explicit user action. Loopback never leaves the host and never
+    /// prompts, which makes it safe to run unattended at launch.
+    ///
+    /// Exists because Apple rejected 1.0.0 (1) under Guideline 2.1: the app
+    /// shipped a hard-coded `Local` entry pointing at Ollama's default port, so
+    /// a reviewer without Ollama saw one red ✗ and nothing else.
+    static func probeLoopback(timeoutPerProbe: TimeInterval = 1.0) async -> [DiscoveredServer] {
+        discoveryLogger.notice("first-run probe: 127.0.0.1 across \(probeMatrix.count) known ports")
+        let found = await probeHosts(["127.0.0.1"], source: .lan, timeoutPerProbe: timeoutPerProbe)
+        discoveryLogger.notice("first-run probe: found \(found.count) server(s)")
+        return found
+    }
+
     static func scan(timeoutPerProbe: TimeInterval = 1.5) async -> [DiscoveredServer] {
         // v0.2.1: .notice level so Discovery activity shows in the in-app
         // LogViewer. Without this the user clicks Discover and sees no
