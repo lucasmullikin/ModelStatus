@@ -3,6 +3,14 @@ import UserNotifications
 import OSLog
 import AppKit
 
+// Guideline 2.4.5(vii): a Mac App Store app must not check for or deliver its
+// own updates. The ENTIRE updater — the GitHub Releases endpoint, the Homebrew
+// upgrade hint, the notification path — is compiled out of the App Store build
+// so the binary carries no trace of it. Rejected on this exact point 2026-06-09;
+// the previous guard was a runtime App-Store-receipt check, which is false
+// during App Review because the reviewer installs from the .pkg.
+#if !MODELSTATUS_APP_STORE
+
 private let logger = Logger(subsystem: ConfigManager.bundleIdentifier, category: "updater")
 
 /// Lightweight value record of "what version did we last find, and where to go for it."
@@ -214,7 +222,7 @@ enum UpdateChecker {
                 return
             }
             guard http.statusCode == 200 else {
-                logger.debug("update check: HTTP \(http.statusCode)")
+                logger.debug("update check: HTTP \(http.statusCode, privacy: .public)")
                 if force {
                     if http.statusCode == 404 {
                         await notifyError("No releases published yet")
@@ -434,3 +442,4 @@ enum UpdateChecker {
         pb.setString(cmd, forType: .string)
     }
 }
+#endif

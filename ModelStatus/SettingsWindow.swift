@@ -15,6 +15,10 @@ final class SettingsWindowController: NSWindowController {
     /// the old LaunchAgent + launchctl bootstrap workflow. Sandbox-friendly,
     /// no external plist shipped in the .app.
     private let startAtLoginCheckbox = NSButton(checkboxWithTitle: "Start ModelStatus at login", target: nil, action: nil)
+    /// v1.0.1: dormant lifecycle toggle. When on (default), approved servers
+    /// that go offline > 24h are hidden from the menu but kept + re-checked so
+    /// they silently reappear when back; gone > 30d are forgotten.
+    private let autoManageCheckbox = NSButton(checkboxWithTitle: "Auto-hide servers offline > 24h (reappear when back)", target: nil, action: nil)
     var onConfigChanged: (() -> Void)?
 
     init() {
@@ -141,6 +145,13 @@ final class SettingsWindowController: NSWindowController {
         startAtLoginCheckbox.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(startAtLoginCheckbox)
 
+        autoManageCheckbox.target = self
+        autoManageCheckbox.action = #selector(autoManageToggled)
+        autoManageCheckbox.state = ConfigManager.shared.autoManageDormant ? .on : .off
+        autoManageCheckbox.toolTip = "When on, a server that goes offline shows as dormant for 24h, then hides from the menu but keeps being re-checked so it reappears automatically when it's back. Forgotten after 30 days offline. Off = servers stay visible as Unreachable and are never auto-removed."
+        autoManageCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(autoManageCheckbox)
+
         let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -216,7 +227,10 @@ final class SettingsWindowController: NSWindowController {
             startAtLoginCheckbox.topAnchor.constraint(equalTo: compactCheckbox.bottomAnchor, constant: 8),
             startAtLoginCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
 
-            separator.topAnchor.constraint(equalTo: startAtLoginCheckbox.bottomAnchor, constant: 16),
+            autoManageCheckbox.topAnchor.constraint(equalTo: startAtLoginCheckbox.bottomAnchor, constant: 8),
+            autoManageCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+
+            separator.topAnchor.constraint(equalTo: autoManageCheckbox.bottomAnchor, constant: 16),
             separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
 
@@ -250,6 +264,11 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func compactToggled() {
         ConfigManager.shared.compactMode = (compactCheckbox.state == .on)
+        onConfigChanged?()
+    }
+
+    @objc private func autoManageToggled() {
+        ConfigManager.shared.autoManageDormant = (autoManageCheckbox.state == .on)
         onConfigChanged?()
     }
 

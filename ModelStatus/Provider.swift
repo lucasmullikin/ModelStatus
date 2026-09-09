@@ -46,11 +46,12 @@ struct ProviderCapabilities: OptionSet, Sendable {
 
     // Presets ----------------------------------------------------------------
 
-    static let ollama:   ProviderCapabilities = [.eject, .loadModel, .listAvailable, .reportsVRAM, .reportsGenerating]
-    static let lmStudio: ProviderCapabilities = [.eject, .loadModel, .listAvailable]
-    static let vllm:     ProviderCapabilities = [.listAvailable, .reportsVRAM]
-    static let mlx:      ProviderCapabilities = [.listAvailable, .reportsVRAM, .reportsGenerating, .needsLocalProcessArgv]
-    static let openAI:   ProviderCapabilities = [.listAvailable]
+    static let ollama:     ProviderCapabilities = [.eject, .loadModel, .listAvailable, .reportsVRAM, .reportsGenerating]
+    static let lmStudio:   ProviderCapabilities = [.eject, .loadModel, .listAvailable]
+    static let vllm:       ProviderCapabilities = [.listAvailable, .reportsVRAM]
+    static let mlx:        ProviderCapabilities = [.listAvailable, .reportsVRAM, .reportsGenerating, .needsLocalProcessArgv]
+    static let openAI:     ProviderCapabilities = [.listAvailable]
+    static let httpHealth: ProviderCapabilities = []
 }
 
 /// All inputs a `Provider.check(_:)` cycle needs, bundled into one value.
@@ -104,17 +105,19 @@ enum ProviderRegistry {
         LMStudioProvider(),
         VLLMProvider(),
         MLXProvider(),
-        OpenAIProvider()    // Catch-all last
+        OpenAIProvider(),   // Catch-all for /v1/models
+        HTTPHealthProvider() // Last resort: /health or /healthz only
     ]
 
     static func provider(for kind: ProviderKind) -> Provider {
         switch kind {
-        case .ollama:   return OllamaProvider()
-        case .lmStudio: return LMStudioProvider()
-        case .vllm:     return VLLMProvider()
-        case .mlx:      return MLXProvider()
-        case .openAI:   return OpenAIProvider()
-        case .auto:     return OpenAIProvider()  // Fallback when probe finds nothing
+        case .ollama:     return OllamaProvider()
+        case .lmStudio:   return LMStudioProvider()
+        case .vllm:       return VLLMProvider()
+        case .mlx:        return MLXProvider()
+        case .openAI:     return OpenAIProvider()
+        case .httpHealth: return HTTPHealthProvider()
+        case .auto:       return OpenAIProvider()  // Fallback when probe finds nothing
         }
     }
 

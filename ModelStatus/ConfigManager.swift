@@ -5,21 +5,23 @@ import OSLog
 private let cfgLogger = Logger(subsystem: "com.lucasmullikin.ModelStatus", category: "config")
 
 enum ProviderKind: String, Codable, CaseIterable, Sendable {
-    case auto      // Auto-detect on first probe
+    case auto       // Auto-detect on first probe
     case ollama
-    case openAI    // Generic OpenAI-compatible (/v1/models)
-    case lmStudio  // LM Studio (/api/v0/models, supports unload)
-    case vllm      // vLLM (adds /metrics for telemetry)
-    case mlx       // mlx_lm.server / mlx-omni-server (single-model, read-only)
+    case openAI     // Generic OpenAI-compatible (/v1/models)
+    case lmStudio   // LM Studio (/api/v0/models, supports unload)
+    case vllm       // vLLM (adds /metrics for telemetry)
+    case mlx        // mlx_lm.server / mlx-omni-server (single-model, read-only)
+    case httpHealth  // Services exposing only /health or /healthz (NuExtract, custom APIs)
 
     var displayName: String {
         switch self {
-        case .auto:     return "Auto-detect"
-        case .ollama:   return "Ollama"
-        case .openAI:   return "OpenAI-compatible"
-        case .lmStudio: return "LM Studio"
-        case .vllm:     return "vLLM"
-        case .mlx:      return "MLX"
+        case .auto:       return "Auto-detect"
+        case .ollama:     return "Ollama"
+        case .openAI:     return "OpenAI-compatible"
+        case .lmStudio:   return "LM Studio"
+        case .vllm:       return "vLLM"
+        case .mlx:        return "MLX"
+        case .httpHealth: return "HTTP Health"
         }
     }
 }
@@ -29,15 +31,34 @@ struct Instance: Codable, Identifiable, Equatable, Sendable {
     var name: String
     var url: String
     var kind: ProviderKind
+    /// When this server was first approved/added. Anchors the dormant clock
+    /// for a server that has never once been reachable. Defaults to now.
+    var addedAt: Date
+    /// Last poll cycle this server answered. nil = never reached yet.
+    var lastSeenReachable: Date?
+    /// When this server was soft-forgotten (hidden from the menu after the
+    /// dormant window). nil = visible (active or dormant). A non-nil value
+    /// means archived: still re-checked at a low interval and silently revived
+    /// if it reappears, hard-deleted after the retention period.
+    var archivedAt: Date?
 
-    init(id: UUID = UUID(), name: String, url: String, kind: ProviderKind = .auto) {
+    /// True while approved + visible (active or dormant), i.e. shown in the menu.
+    var isVisible: Bool { archivedAt == nil }
+
+    init(id: UUID = UUID(), name: String, url: String, kind: ProviderKind = .auto,
+         addedAt: Date = Date(), lastSeenReachable: Date? = nil, archivedAt: Date? = nil) {
         self.id = id
         self.name = name
         self.url = url
         self.kind = kind
+        self.addedAt = addedAt
+        self.lastSeenReachable = lastSeenReachable
+        self.archivedAt = archivedAt
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, url, kind }
+    enum CodingKeys: String, CodingKey {
+        case id, name, url, kind, addedAt, lastSeenReachable, archivedAt
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -45,6 +66,12 @@ struct Instance: Codable, Identifiable, Equatable, Sendable {
         self.name = try c.decode(String.self, forKey: .name)
         self.url = try c.decode(String.self, forKey: .url)
         self.kind = (try? c.decodeIfPresent(ProviderKind.self, forKey: .kind)) ?? .ollama
+        // Lifecycle fields are additive (v1.0.1). Pre-existing config has none;
+        // default addedAt to now so a legacy instance's dormant clock starts at
+        // first load rather than archiving it immediately.
+        self.addedAt = (try? c.decodeIfPresent(Date.self, forKey: .addedAt)) ?? Date()
+        self.lastSeenReachable = (try? c.decodeIfPresent(Date.self, forKey: .lastSeenReachable)) ?? nil
+        self.archivedAt = (try? c.decodeIfPresent(Date.self, forKey: .archivedAt)) ?? nil
     }
 }
 
@@ -54,26 +81,34 @@ struct AppConfig: Codable {
     var notifyOnStateChange: Bool
     var compactMode: Bool
     var verboseLogging: Bool
+    /// v1.0.1: when true (default), approved servers that go unreachable show
+    /// as dormant for 24h, then hide (archive) but keep being re-checked so
+    /// they silently reappear if they come back. When false, servers behave as
+    /// pre-v1.0.1: stay visible as "unreachable" indefinitely, never auto-pruned.
+    var autoManageDormant: Bool
 
     static let `default` = AppConfig(
         instances: [Instance(name: "Local", url: "http://127.0.0.1:11434", kind: .ollama)],
         pollInterval: 5.0,
         notifyOnStateChange: false,
         compactMode: false,
-        verboseLogging: false
+        verboseLogging: false,
+        autoManageDormant: true
     )
 
     enum CodingKeys: String, CodingKey {
-        case instances, pollInterval, notifyOnStateChange, compactMode, verboseLogging
+        case instances, pollInterval, notifyOnStateChange, compactMode, verboseLogging, autoManageDormant
     }
 
     init(instances: [Instance], pollInterval: TimeInterval,
-         notifyOnStateChange: Bool, compactMode: Bool, verboseLogging: Bool = false) {
+         notifyOnStateChange: Bool, compactMode: Bool, verboseLogging: Bool = false,
+         autoManageDormant: Bool = true) {
         self.instances = instances
         self.pollInterval = pollInterval
         self.notifyOnStateChange = notifyOnStateChange
         self.compactMode = compactMode
         self.verboseLogging = verboseLogging
+        self.autoManageDormant = autoManageDormant
     }
 
     init(from decoder: Decoder) throws {
@@ -83,6 +118,7 @@ struct AppConfig: Codable {
         self.notifyOnStateChange = try c.decodeIfPresent(Bool.self, forKey: .notifyOnStateChange) ?? false
         self.compactMode = try c.decodeIfPresent(Bool.self, forKey: .compactMode) ?? false
         self.verboseLogging = try c.decodeIfPresent(Bool.self, forKey: .verboseLogging) ?? false
+        self.autoManageDormant = try c.decodeIfPresent(Bool.self, forKey: .autoManageDormant) ?? true
     }
 }
 
@@ -97,6 +133,7 @@ struct PollContext: Sendable {
     let verbose: Bool
     let pollInterval: TimeInterval
     let instances: [Instance]
+    let autoManageDormant: Bool
     let timestamp: Date
 }
 
@@ -194,6 +231,15 @@ final class ConfigManager {
         }
     }
 
+    var autoManageDormant: Bool {
+        get { _config.autoManageDormant }
+        set {
+            let snapshot = _config.autoManageDormant
+            _config.autoManageDormant = newValue
+            if !save() { _config.autoManageDormant = snapshot }
+        }
+    }
+
     /// Snapshot reader used by `Monitor.poll()` to capture config in a single hop.
     /// After v0.2 step B this becomes the only legal way to read config from non-MainActor contexts.
     func snapshotForPoll() -> PollContext {
@@ -201,8 +247,67 @@ final class ConfigManager {
             verbose: _config.verboseLogging,
             pollInterval: _config.pollInterval,
             instances: _config.instances,
+            autoManageDormant: _config.autoManageDormant,
             timestamp: Date()
         )
+    }
+
+    // MARK: - Lifecycle transitions (v1.0.1)
+
+    /// Apply a batch of `LifecyclePolicy` transitions in a single save. Called
+    /// once per poll cycle from Monitor (via MainActor). Hard-deletes also
+    /// clear the Keychain credential. Returns the set of instance IDs that
+    /// were hard-deleted so the caller can drop any per-instance memo state.
+    @discardableResult
+    func applyLifecycle(_ transitions: [(id: UUID, transition: LifecyclePolicy.Transition, now: Date)]) -> Set<UUID> {
+        guard !transitions.isEmpty else { return [] }
+        let snapshot = _config.instances
+        var deleted = Set<UUID>()
+        var changed = false
+
+        for t in transitions {
+            guard let i = _config.instances.firstIndex(where: { $0.id == t.id }) else { continue }
+            switch t.transition {
+            case .none:
+                continue
+            case .markReachable:
+                _config.instances[i].lastSeenReachable = t.now
+                _config.instances[i].archivedAt = nil
+                changed = true
+            case .revive:
+                _config.instances[i].lastSeenReachable = t.now
+                _config.instances[i].archivedAt = nil
+                changed = true
+            case .archive:
+                _config.instances[i].archivedAt = t.now
+                changed = true
+            case .hardDelete:
+                deleted.insert(t.id)
+            }
+        }
+
+        if !deleted.isEmpty {
+            _config.instances.removeAll { deleted.contains($0.id) }
+            changed = true
+        }
+
+        guard changed else { return [] }
+        if !save() {
+            _config.instances = snapshot
+            cfgLogger.error("applyLifecycle: rolled back — config persistence failed")
+            return []
+        }
+        // Keychain cleanup only AFTER the config save succeeds (matches the
+        // transactional ordering of removeInstance).
+        for id in deleted {
+            if !Keychain.setAuthHeader(nil, for: id) {
+                cfgLogger.error("applyLifecycle: config saved but Keychain delete failed for hard-deleted instance \(id, privacy: .public)")
+            }
+        }
+        if !deleted.isEmpty {
+            cfgLogger.notice("lifecycle: hard-deleted \(deleted.count) archived server(s) past retention")
+        }
+        return deleted
     }
 
     private init() {

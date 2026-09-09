@@ -27,6 +27,11 @@ struct InstanceState: Sendable, Codable {
 actor Monitor {
     private var pollTask: Task<Void, Never>?
     private var state: [UUID: InstanceState] = [:]
+    /// v1.0.1: last time each archived instance was re-checked for revival.
+    /// Archived servers are polled only every `LifecyclePolicy.revivalInterval`
+    /// rather than every cycle, so a long-dead server doesn't add per-cycle
+    /// network cost. Cleared when an instance is hard-deleted.
+    private var lastRevivalCheck: [UUID: Date] = [:]
     /// Audit-round-D3: every startPolling()/stopPolling() bumps this. An older
     /// in-flight poll captures its generation and refuses to mutate state or
     /// emit callbacks if the captured value no longer matches — so a slow
@@ -153,15 +158,64 @@ actor Monitor {
         guard generation == pollGeneration else { return ctx }
         let validIds = Set(ctx.instances.map { $0.id })
         state = state.filter { validIds.contains($0.key) }
+        lastRevivalCheck = lastRevivalCheck.filter { validIds.contains($0.key) }
+
+        // v1.0.1: poll all visible instances every cycle; poll archived
+        // (soft-forgotten) instances only every `revivalInterval` so a
+        // long-dead server doesn't cost a probe every cycle — but it's still
+        // re-checked often enough to silently revive when it reappears.
+        let now = ctx.timestamp
+        let toPoll = ctx.instances.filter { inst in
+            if inst.isVisible { return true }
+            let last = lastRevivalCheck[inst.id]
+            return last == nil || now.timeIntervalSince(last!) >= LifecyclePolicy.revivalInterval
+        }
+        for inst in toPoll where !inst.isVisible { lastRevivalCheck[inst.id] = now }
+
         let statuses = await withTaskGroup(of: ServerStatus.self) { group in
-            for inst in ctx.instances { group.addTask { await self.check(inst, generation: generation) } }
+            for inst in toPoll {
+                group.addTask { await self.check(inst, generation: generation) }
+            }
             var r: [ServerStatus] = []
             for await s in group { r.append(s) }
             return r
         }
         var map: [UUID: ServerStatus] = [:]
         for s in statuses { map[s.instance.id] = s }
-        let ordered = ctx.instances.compactMap { map[$0.id] }
+
+        // Compute lifecycle transitions for every instance we polled this
+        // cycle, then apply them in a single persisted batch.
+        var transitions: [(id: UUID, transition: LifecyclePolicy.Transition, now: Date)] = []
+        for inst in toPoll {
+            guard let st = map[inst.id] else { continue }
+            let t = LifecyclePolicy.classify(
+                now: now,
+                addedAt: inst.addedAt,
+                lastSeenReachable: inst.lastSeenReachable,
+                archivedAt: inst.archivedAt,
+                reachable: st.state != .unreachable,
+                enabled: ctx.autoManageDormant
+            )
+            if t != .none { transitions.append((inst.id, t, now)) }
+        }
+        if !transitions.isEmpty {
+            let deleted = await MainActor.run { ConfigManager.shared.applyLifecycle(transitions) }
+            for id in deleted { state[id] = nil; lastRevivalCheck[id] = nil }
+        }
+
+        // Menu shows only VISIBLE servers (active or dormant). Archived ones
+        // were polled for revival but must not appear; an instance that just
+        // archived this cycle is dropped here too. Determine visibility from
+        // the post-transition view: archive removes from visible, revive adds.
+        let archivedThisCycle = Set(transitions.filter { $0.transition == .archive }.map { $0.id })
+        let revivedThisCycle = Set(transitions.filter { $0.transition == .revive }.map { $0.id })
+        let deletedThisCycle = Set(transitions.filter { $0.transition == .hardDelete }.map { $0.id })
+        let ordered = ctx.instances.compactMap { inst -> ServerStatus? in
+            guard let s = map[inst.id] else { return nil }   // not polled this cycle (resting archived)
+            if deletedThisCycle.contains(inst.id) { return nil }
+            let visible = (inst.isVisible && !archivedThisCycle.contains(inst.id)) || revivedThisCycle.contains(inst.id)
+            return visible ? s : nil
+        }
 
         // Audit-round-D3: stale-generation guard. If startPolling / stopPolling
         // ran while this poll was suspended in the task group, the captured
@@ -190,7 +244,7 @@ actor Monitor {
                 // suspenders against any pre-v0.2.1 instance that bypassed
                 // validation OR a future regression that re-introduces
                 // credentials in the URL field.
-                logger.notice("\(s.instance.name, privacy: .public) (\(Anonymizer.scrubURL(s.instance.url), privacy: .public)) → \(reachable ? "reachable" : "UNREACHABLE", privacy: .public)")
+                logger.notice("\(s.instance.name, privacy: .public) (\(s.instance.url, privacy: .private)) → \(reachable ? "reachable" : "UNREACHABLE", privacy: .public)")
             }
         }
 
@@ -364,12 +418,12 @@ actor Monitor {
                 // v0.2.1: surface auto-detection so the user sees what
                 // backend the app picked. Only fires on first successful
                 // probe (subsequent polls hit the cached branch above).
-                logger.notice("auto-detected \(String(describing: p.kind), privacy: .public) for \(instance.name, privacy: .public) (\(Anonymizer.scrubURL(instance.url), privacy: .public))")
+                logger.notice("auto-detected \(String(describing: p.kind), privacy: .public) for \(instance.name, privacy: .public)")
             }
             return p
         }
         // Fallback: try OpenAI generic so we at least report unreachable cleanly
-        logger.notice("auto-detect failed for \(instance.name, privacy: .public) (\(Anonymizer.scrubURL(instance.url), privacy: .public)) — falling back to OpenAI-generic")
+        logger.notice("auto-detect failed for \(instance.name, privacy: .public) — falling back to OpenAI-generic")
         return OpenAIProvider()
     }
 
@@ -380,6 +434,7 @@ actor Monitor {
         case .vllm:                   return 8000
         case .mlx:                    return 8080   // mlx_lm.server default; mlx-omni-server uses 10240
         case .openAI, .auto:          return 8080
+        case .httpHealth:             return 8091
         }
     }
 
@@ -390,6 +445,7 @@ actor Monitor {
         case .vllm:                   return "vllm"
         case .mlx:                    return "mlx"  // matches mlx_lm.server / mlx-omni-server argv
         case .openAI, .auto:          return ""    // No process binding for generic
+        case .httpHealth:             return ""    // No process binding for health-only
         }
     }
 

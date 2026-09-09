@@ -98,11 +98,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         rebuildMenu()
         startMonitoring()
 
-        // Background update check 5s after launch (lets polling settle first)
+        // Background update check 5s after launch (lets polling settle first).
+        // App Store rejection 2026-06-09, Guideline 2.4.5(vii): "The app updates
+        // itself outside of the Mac App Store." A COMPILE gate, not the old
+        // runtime `isAppStoreInstalled()` receipt check — App Review installs
+        // from the .pkg, which has no receipt, so the runtime check evaluated
+        // false on the reviewer's machine and this ran anyway.
+        #if !MODELSTATUS_APP_STORE
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             await UpdateChecker.check(force: false)
         }
+        #endif
 
         if !WelcomeWindowController.hasShownBefore {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -289,7 +296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(diagItem)
 
         // Update section — either a single "Check for Updates…" or a submenu if a
-        // cached update is pending action.
+        // cached update is pending action. Excluded from the App Store build
+        // under Guideline 2.4.5(vii): Mac App Store apps must not offer their
+        // own update checks. This is what Apple screenshotted on 2026-06-09.
+        #if !MODELSTATUS_APP_STORE
         if let pending = UpdateChecker.cachedAvailableUpdate() {
             let updateItem = NSMenuItem(title: "Update available — \(pending.tag)", action: nil, keyEquivalent: "")
             let updateMenu = NSMenu()
@@ -322,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let updateCheck = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         updateCheck.target = self
         menu.addItem(updateCheck)
+        #endif
 
         let settings = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
@@ -338,15 +349,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func addInstanceCompact(to menu: NSMenu, status: ServerStatus) {
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        let line = Formatters.compactLine(status: status)
+        // v1.0.1: dormant servers dim in compact mode too.
+        let dormant = status.state == .unreachable && ConfigManager.shared.autoManageDormant
+        let line = dormant
+            ? "\u{25CB} \(status.instance.name) \u{00B7} \(dormantText(for: status.instance))"
+            : Formatters.compactLine(status: status)
         item.attributedTitle = NSAttributedString(
             string: line,
-            attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+            attributes: [.font: NSFont.systemFont(ofSize: 13),
+                         .foregroundColor: dormant ? NSColor.tertiaryLabelColor : NSColor.labelColor]
         )
         menu.addItem(item)
     }
 
     private func addInstance(to menu: NSMenu, status: ServerStatus) {
+        // v1.0.1: an unreachable-but-still-visible server is "dormant" when
+        // auto-manage is on — render it dimmed with a "last seen" timestamp
+        // rather than a stark red "Unreachable", since it'll auto-revive.
+        if status.state == .unreachable && ConfigManager.shared.autoManageDormant {
+            menu.addItem(headerItem(icon: "\u{25CB}", color: .secondaryLabelColor,
+                                    name: status.instance.name,
+                                    text: dormantText(for: status.instance), dimmed: true))
+            return
+        }
         let (icon, color, text) = statusInfo(status)
         menu.addItem(headerItem(icon: icon, color: color, name: status.instance.name, text: text))
 
@@ -545,6 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         welcomeController?.showWindow()
     }
 
+    #if !MODELSTATUS_APP_STORE
     @objc private func checkForUpdates() {
         Task { @MainActor in
             await UpdateChecker.check(force: true)
@@ -558,6 +584,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               Self.isSafeOpenURL(url) else { return }
         NSWorkspace.shared.open(url)
     }
+    #endif
 
     /// Allowlist BOTH scheme and host for any URL we hand to `NSWorkspace.shared.open`.
     /// HTTPS only + an EXACT-host allowlist. Audit-round-D7 hardening: the
@@ -566,6 +593,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     nonisolated static func isSafeOpenURL(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(), scheme == "https" else { return false }
         guard let host = url.host?.lowercased() else { return false }
+        // The GitHub hosts exist only to serve the updater's release links, which
+        // are compiled out of the App Store build under Guideline 2.4.5(vii).
+        // Keeping them in the allowlist would leave update-delivery hostnames in
+        // a Mac App Store binary that has no update path to use them.
+        #if MODELSTATUS_APP_STORE
+        let allowedExact: Set<String> = [
+            "apps.apple.com",
+            "itunes.apple.com",
+            "support.apple.com"
+        ]
+        #else
         let allowedExact: Set<String> = [
             "github.com",
             "www.github.com",
@@ -575,9 +613,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             "itunes.apple.com",
             "support.apple.com"
         ]
+        #endif
         return allowedExact.contains(host)
     }
 
+    #if !MODELSTATUS_APP_STORE
     @objc private func copyBrewUpgradeCmd() {
         UpdateChecker.copyBrewUpgradeCommand()
     }
@@ -591,12 +631,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UpdateChecker.dismissCachedUpdate()
         rebuildMenu()
     }
+    #endif
 
     @objc private func showLogViewer() {
         appLogger.notice("opening Log Viewer")
         LogViewerWindowController.shared.showWindow()
     }
 
+    // Diagnostic bundle export is direct-download-only: it shells out to
+    // sw_vers / sysctl / ps / zip, none of which are permitted under the App
+    // Store sandbox. The menu item is gated in populateMenu(); the handler +
+    // DiagnosticBundle itself are compiled out so the subprocess code never
+    // lands in the App Store binary.
+    #if !MODELSTATUS_APP_STORE
     @objc private func exportDiagnosticBundle() {
         appLogger.notice("exporting diagnostic bundle")
         // Audit-round-D46: a menu-bar-only app may have NO real windows when
@@ -617,6 +664,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
     }
+    #endif
 
     /// Manual permission request, used from Settings when the user enables
     /// notifyOnStateChange. notifyReachability re-queries settings every
@@ -693,14 +741,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    private func headerItem(icon: String, color: NSColor, name: String, text: String) -> NSMenuItem {
+    private func headerItem(icon: String, color: NSColor, name: String, text: String, dimmed: Bool = false) -> NSMenuItem {
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         let t = NSMutableAttributedString()
-        t.append(mono(icon + " ", size: 14, weight: .bold, color: color))
-        t.append(NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: NSColor.labelColor]))
-        t.append(NSAttributedString(string: "  " + text, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: color]))
+        // v1.0.1: dormant (unreachable-but-still-approved) servers render dimmed
+        // so they read as "resting", distinct from a hard error.
+        let nameColor: NSColor = dimmed ? .secondaryLabelColor : .labelColor
+        t.append(mono(icon + " ", size: 14, weight: .bold, color: dimmed ? .tertiaryLabelColor : color))
+        t.append(NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: nameColor]))
+        t.append(NSAttributedString(string: "  " + text, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: dimmed ? .tertiaryLabelColor : color]))
         item.attributedTitle = t
         return item
+    }
+
+    /// v1.0.1: label for a dormant server — "Dormant · last seen 3h ago" or
+    /// "Dormant · never reached" for a freshly-added server that's still down.
+    private func dormantText(for inst: Instance) -> String {
+        if let seen = inst.lastSeenReachable {
+            return "Dormant \u{00B7} last seen \(Formatters.elapsed(since: seen))"
+        }
+        return "Dormant \u{00B7} not yet reached"
     }
 
     private func styledItem(_ text: String, font: NSFont) -> NSMenuItem {
@@ -822,6 +882,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 @main
 struct ModelStatusApp {
     static func main() {
+        // LocalSystemAccess.swift's contract: "App Store target must call
+        // configure(SandboxedLocalSystemAccess()) from main() before the first
+        // Monitor poll." Nothing ever did, so every sandboxed launch — GUI and
+        // CLI alike — logged an OSLog fault and the D46 first-access guard was
+        // never actually armed. The compile-time default was already correct
+        // and fail-closed, so this was never a security hole; it made the
+        // detector permanently unable to report a negative. Must precede the
+        // CLI switch below, which polls and therefore reads `current`.
+        #if MODELSTATUS_APP_STORE
+        LocalSystemAccessProvider.configure(SandboxedLocalSystemAccess())
+        #endif
+
         // Headless CLI path: `ModelStatus status [--json]` / `--help`. Runs a
         // single poll cycle (or prints help) and exits without ever creating
         // the menu bar app. Unknown args fall through to .gui so macOS-injected

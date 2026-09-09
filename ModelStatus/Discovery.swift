@@ -11,17 +11,12 @@ private let discoveryLogger = Logger(subsystem: ConfigManager.bundleIdentifier, 
 /// signed binary spoofing the bundle identifier with a different team's
 /// certificate would be rejected.
 ///
-/// Tradeoff: if Tailscale ever changes their signing Team ID, this check
-/// will fail closed (the Tailscale scan path simply returns no peers, which
-/// is the safe outcome — better than running an untrusted binary).
-///
-/// What this defends against:
-///   • Unsigned binaries planted at the expected path.
-///   • Tampered/invalid signatures.
-///   • Signed binaries from an unrelated developer/team.
-/// What it does NOT defend against:
-///   • A binary actually signed by Tailscale that has been compromised
-///     upstream. Out of scope at the OS-app-trust layer.
+/// Excluded from the App Store (sandboxed) build:
+/// `SecStaticCodeCreateWithPath` is a private SPI from libsecurity_codesigning
+/// that Apple's binary scanner flags. The sandboxed build can't exec Tailscale
+/// anyway (Process is blocked), so skipping the verification is safe — the
+/// Tailscale discovery path returns no peers under sandbox.
+#if !MODELSTATUS_APP_STORE
 @_silgen_name("SecStaticCodeCreateWithPath")
 private func _SecStaticCodeCreateWithPathShim(_ url: CFURL, _ flags: SecCSFlags, _ out: UnsafeMutablePointer<SecStaticCode?>) -> OSStatus
 
@@ -30,21 +25,14 @@ private func verifyCodeSignature(atPath path: String) -> Bool {
     var staticCode: SecStaticCode?
     guard _SecStaticCodeCreateWithPathShim(url, [], &staticCode) == errSecSuccess,
           let code = staticCode else { return false }
-    // Step 1: generic validity (signed at all, not tampered).
     guard SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess else { return false }
-    // Step 2: bundle-identifier + team-ID pinning. Tailscale ships under
-    // two known bundle IDs; both are signed by team W5364U7YZB. Pinning
-    // the team rejects a bundle-ID-spoofed binary signed by anyone else.
-    // Audit-round-D14: single-line requirement string. The earlier raw
-    // multi-line form had literal backslashes (raw strings don't honor `\`
-    // as line-continuation), which `SecRequirementCreateWithString` would
-    // reject — silently failing the whole Tailscale scan.
     let requirementText = #"(identifier "io.tailscale.ipn.macsys" or identifier "io.tailscale.ipn.macos") and anchor apple generic and certificate leaf[subject.OU] = "W5364U7YZB""#
     var requirement: SecRequirement?
     guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,
           let req = requirement else { return false }
     return SecStaticCodeCheckValidity(code, [], req) == errSecSuccess
 }
+#endif
 
 struct DiscoveredServer: Identifiable, Equatable, Hashable, Sendable {
     let host: String
@@ -93,6 +81,7 @@ enum Discovery {
         (11434, .ollama),
         (1234,  .lmStudio),
         (8080,  .openAI),     // mlx_lm.server default + many OpenAI-compat tools
+        (8091,  .httpHealth),  // NuExtract / custom servers with /health only
         (10240, .openAI),     // mlx-omni-server default
         (8000,  .vllm),
         (5001,  .openAI)      // text-generation-webui
@@ -273,10 +262,12 @@ enum Discovery {
         // which Foundation `Process` doesn't expose. Out of scope at this
         // layer — a local attacker with `/Applications` write access already
         // controls the user's account-level execution surface.
+        #if !MODELSTATUS_APP_STORE
         guard verifyCodeSignature(atPath: tsPath) else {
             discoveryLogger.error("refusing to exec Tailscale binary — code signature verification failed for \(tsPath, privacy: .public)")
             return []
         }
+        #endif
         // Audit-round-D53-architect: route through LocalSystemAccess so the
         // sandboxed target gets nil and Tailscale discovery silently fails
         // (correct sandbox behavior — Process exec isn't allowed there).
@@ -385,7 +376,12 @@ enum Discovery {
     private static func singleProbe(host: String, port: Int, kind: ProviderKind,
                                     session: URLSession,
                                     source: DiscoveredServer.Source) async -> DiscoveredServer? {
-        let path = (kind == .ollama) ? "/api/tags" : "/v1/models"
+        let path: String
+        switch kind {
+        case .ollama: path = "/api/tags"
+        case .httpHealth: path = "/health"
+        default: path = "/v1/models"
+        }
         // Route IPv6 literals through formatURL so brackets are added — otherwise
         // IPv6 Tailscale peer addresses silently fail URL parsing.
         guard let url = URL(string: "\(formatURL(host: host, port: port))\(path)") else { return nil }
@@ -421,6 +417,9 @@ enum Discovery {
             }
             if kind == .ollama {
                 guard json["models"] is [Any] else { return nil }
+            } else if kind == .httpHealth {
+                guard let status = json["status"] as? String,
+                      status.lowercased() == "ok" || status.lowercased() == "healthy" else { return nil }
             } else {
                 // OpenAI-compat: object="list" + data is an array
                 guard (json["object"] as? String) == "list",

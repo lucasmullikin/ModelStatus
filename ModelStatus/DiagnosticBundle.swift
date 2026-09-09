@@ -6,6 +6,12 @@ import UniformTypeIdentifiers
 /// Diagnostic bundle exporter — produces a user-savable .zip with config, logs,
 /// system info, and (optionally) a process list + discovery scan. Every text file
 /// inside is run through `Anonymizer.scrub` so secrets and hostnames don't leak.
+///
+/// Direct-download build only. Assembly shells out to `sw_vers`, `sysctl`, `ps`,
+/// and `/usr/bin/zip` — all blocked under the App Store sandbox — so the entire
+/// type is compiled out of the sandboxed build. The only call site
+/// (`AppDelegate.exportDiagnosticBundle`) and its menu item are gated to match.
+#if !MODELSTATUS_APP_STORE
 enum DiagnosticBundle {
 
     // MARK: Options
@@ -764,3 +770,4 @@ enum DiagnosticBundle {
         }
     }
 }
+#endif

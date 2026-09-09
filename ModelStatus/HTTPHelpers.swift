@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let httpLog = Logger(subsystem: ConfigManager.bundleIdentifier, category: "http")
 
 /// Session delegate that refuses to follow HTTP redirects on telemetry calls.
 /// Audit-round-D12: without this, `URLSession` would happily follow a 3xx
@@ -24,16 +27,60 @@ enum HTTPHelpers {
     /// per-call delegate, so a single instance is safe to share.
     static let noRedirectDelegate = NoRedirectSessionDelegate()
 
-    /// Streaming GET. Aborts the download as soon as the byte count exceeds
-    /// `maxResponseBytes` instead of buffering the entire body first. The
-    /// `Content-Length` veto is still cheap when the server provides it.
+    /// Hosts that can never resolve to cloud metadata IPs, so the blocking
+    /// `getaddrinfo` call in `DNSResolutionGuard` can be skipped. mDNS
+    /// `.local` lookups are especially dangerous — they block the Swift
+    /// Concurrency cooperative thread pool via `_mdns_search_ex → kevent`.
+    static func isKnownSafeHost(_ host: String) -> Bool {
+        let h = host.lowercased()
+        if h == "localhost" || h == "127.0.0.1" || h == "::1" { return true }
+        if h.hasSuffix(".local") || h.hasSuffix(".local.") { return true }
+        if URLValidator.canonicalIPv4Numeric(h) != nil { return true }
+        if URLValidator.canonicalIPv6(h) != nil { return true }
+        return false
+    }
+
+    /// Resolves `.local` mDNS hostnames to their IPv4 address and rewrites
+    /// the URL. NWConnection (used by URLSession) prefers IPv6 link-local
+    /// addresses returned by mDNS, but often fails to connect because the
+    /// scope ID (`%en0`) isn't propagated correctly through the HTTP stack.
+    /// This causes every `.local` request to hang until timeout. Resolving
+    /// to IPv4 up front sidesteps the issue entirely.
     ///
-    /// DNS-rebinding mitigation: if the URL's host resolves to a blocked
-    /// metadata IP at this moment, abort before any data crosses the wire.
-    /// TOCTOU is still possible against URLSession's own resolution, but the
-    /// attack window shrinks from every poll to a single in-flight race.
-    static func get(_ url: URL, instanceID: UUID, session: URLSession,
-                    timeout: TimeInterval = 5) async throws -> (Data, HTTPURLResponse, Int) {
+    /// The resolution runs on a detached task (not the cooperative pool)
+    /// because `getaddrinfo` for `.local` names blocks on mDNS IPC.
+    /// Results are cached for 60s per hostname.
+    ///
+    /// App Store (sandboxed) build: `Process()` is forbidden under the
+    /// sandbox, so this resolution is disabled — `.local` hostnames pass
+    /// through unchanged. Users of the App Store build must enter IP
+    /// addresses directly for remote servers.
+    #if !MODELSTATUS_APP_STORE
+    private static let mdnsCache = MDNSCache()
+    #endif
+
+    static func resolveLocalURL(_ url: URL) async -> URL {
+        #if MODELSTATUS_APP_STORE
+        return url
+        #else
+        guard let host = url.host?.lowercased(),
+              host.hasSuffix(".local") || host.hasSuffix(".local.") else {
+            return url
+        }
+        if let ipv4 = await mdnsCache.resolve(host) {
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            components?.host = ipv4
+            return components?.url ?? url
+        }
+        httpLog.notice("mDNS → IPv4 resolution failed for \(host, privacy: .public), using original URL")
+        return url
+        #endif
+    }
+
+    /// Internal GET implementation. Callers should use `get()` which pre-resolves
+    /// `.local` hostnames to IPv4.
+    private static func _get(_ url: URL, instanceID: UUID, session: URLSession,
+                             timeout: TimeInterval = 5) async throws -> (Data, HTTPURLResponse, Int) {
         // Audit-round-D16: reject non-HTTP(S) URLs up front so a programmatic
         // construction error can't slip a `file:`/`ftp:`/other-scheme request
         // through. URLValidator already gates user input at config time; this
@@ -42,7 +89,8 @@ enum HTTPHelpers {
               scheme == "http" || scheme == "https" else {
             throw URLError(.unsupportedURL)
         }
-        if let host = url.host, DNSResolutionGuard.resolvesToBlockedAddress(host) {
+        if let host = url.host, !Self.isKnownSafeHost(host),
+           DNSResolutionGuard.resolvesToBlockedAddress(host) {
             throw URLError(.badURL)
         }
         var req = URLRequest(url: url)
@@ -73,17 +121,29 @@ enum HTTPHelpers {
         return (data, http, latency)
     }
 
-    /// POST with the same response-size cap as `get`. Streams the response and
-    /// aborts the moment the cap is exceeded. Audit-round-8 fix: the previous
-    /// version used `session.data(for:)`, which buffers the whole body and
-    /// undercut the shared "all HTTP fetches are capped" guarantee.
+    /// Streaming GET with `.local` mDNS workaround. Resolves `.local` hostnames
+    /// to IPv4 before hitting URLSession to avoid the IPv6 link-local hang.
+    static func get(_ url: URL, instanceID: UUID, session: URLSession,
+                    timeout: TimeInterval = 5) async throws -> (Data, HTTPURLResponse, Int) {
+        return try await _get(await resolveLocalURL(url), instanceID: instanceID,
+                              session: session, timeout: timeout)
+    }
+
+    /// POST with `.local` mDNS workaround.
     static func post(_ url: URL, body: [String: Any], instanceID: UUID,
                      session: URLSession, timeout: TimeInterval = 10) async throws -> HTTPURLResponse {
+        return try await _post(await resolveLocalURL(url), body: body, instanceID: instanceID,
+                               session: session, timeout: timeout)
+    }
+
+    private static func _post(_ url: URL, body: [String: Any], instanceID: UUID,
+                              session: URLSession, timeout: TimeInterval = 10) async throws -> HTTPURLResponse {
         guard let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else {
             throw URLError(.unsupportedURL)
         }
-        if let host = url.host, DNSResolutionGuard.resolvesToBlockedAddress(host) {
+        if let host = url.host, !Self.isKnownSafeHost(host),
+           DNSResolutionGuard.resolvesToBlockedAddress(host) {
             throw URLError(.badURL)
         }
         var req = URLRequest(url: url)
@@ -111,3 +171,61 @@ enum HTTPHelpers {
         return http
     }
 }
+
+/// Thread-safe cache for mDNS → IPv4 resolution results. Entries expire
+/// after 60s to track DHCP changes without hammering mDNS every poll.
+/// Shells out to `dscacheutil` because both `getaddrinfo` and
+/// `DNSServiceGetAddrInfo` hang inside ad-hoc signed app bundles (macOS
+/// restricts mDNS IPC for unsigned/ad-hoc processes). The subprocess
+/// approach works regardless of code signing since `dscacheutil` is a
+/// system tool with its own entitlements.
+///
+/// Excluded from the App Store (sandboxed) build — `Process()` is not
+/// available under the sandbox.
+#if !MODELSTATUS_APP_STORE
+private actor MDNSCache {
+    private var entries: [String: (ip: String, expiry: Date)] = [:]
+
+    func resolve(_ hostname: String) async -> String? {
+        let key = hostname.lowercased()
+        if let e = entries[key], e.expiry > Date() { return e.ip }
+
+        let resolved: String? = await Task.detached(priority: .utility) {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/dscacheutil")
+            proc.arguments = ["-q", "host", "-a", "name", hostname]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+            } catch { return nil }
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else { return nil }
+
+            // Parse output like:
+            // name: macmini-m4-pro.local
+            // ip_address: 192.168.1.50
+            for line in output.components(separatedBy: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("ip_address:") {
+                    let ip = trimmed.dropFirst("ip_address:".count)
+                        .trimmingCharacters(in: .whitespaces)
+                    // Only return IPv4
+                    if ip.contains(".") && !ip.contains(":") {
+                        return ip
+                    }
+                }
+            }
+            return nil
+        }.value
+
+        if let ip = resolved {
+            entries[key] = (ip, Date().addingTimeInterval(60))
+        }
+        return resolved
+    }
+}
+#endif
