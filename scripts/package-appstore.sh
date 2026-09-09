@@ -6,7 +6,7 @@
 #   2. embed the App Store provisioning profile
 #   3. codesign the .app              (Apple Distribution, hardened runtime, timestamp)
 #   4. productbuild → .pkg            (3rd Party Mac Developer Installer)
-#   5. (optional) validate/upload     (xcrun altool — needs your app-specific password)
+#   5. (optional) validate/upload     (xcrun altool — API key or app password)
 #
 # Usage:
 #   ./scripts/package-appstore.sh [--profile PATH] [--validate] [--upload]
@@ -24,8 +24,14 @@
 #
 # For --validate / --upload you must export the credentials first so the
 # app-specific password never lands in shell history or this file:
-#   export ASC_APPLE_ID="lucasstuff@protonmail.com"
-#   export ASC_APP_PASSWORD="<app-specific-password>"   # from account.apple.com
+#   PREFERRED — App Store Connect API key (Developer role):
+#     ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8   (chmod 600)
+#     ~/.appstoreconnect/issuer_id                          (or export ASC_ISSUER_ID)
+#   The key id is read from the filename; nothing secret goes in the environment.
+#
+#   FALLBACK — app-specific password:
+#     export ASC_APPLE_ID="lucasstuff@protonmail.com"
+#     export ASC_APP_PASSWORD="<app-specific-password>"   # from account.apple.com
 #
 # The .app, Distribution cert, and Installer cert are all team ZFXWBW78LZ.
 
@@ -107,20 +113,57 @@ productbuild --component "$APP" /Applications \
 ok "built $PKG ($(du -h "$PKG" | cut -f1))"
 
 # ─── 5. optional validate / upload ──────────────────────────────────────────
+# Two auth paths, API key preferred. The 2026-06-09 resubmit died here on a
+# 401 from the app-specific-password path (the password had almost certainly
+# been minted under a different Apple ID than the one that owns the app), and
+# that single failure is why the fixed build never shipped. An API key has no
+# secret in the environment, does not expire with the Apple ID password, and
+# works unattended.
+ASC_KEY_DIR="${ASC_KEY_DIR:-$HOME/.appstoreconnect/private_keys}"
+AUTH_ARGS=()
+AUTH_KIND=""
+
 if [[ $DO_VALIDATE -eq 1 || $DO_UPLOAD -eq 1 ]]; then
-    [[ -n "${ASC_APPLE_ID:-}" ]]     || die "set ASC_APPLE_ID for validate/upload"
-    [[ -n "${ASC_APP_PASSWORD:-}" ]] || die "set ASC_APP_PASSWORD for validate/upload"
+    # Derive the key id from the filename when exactly one key is installed —
+    # altool wants the bare KEYID from AuthKey_<KEYID>.p8.
+    if [[ -z "${ASC_KEY_ID:-}" && -d "$ASC_KEY_DIR" ]]; then
+        shopt -s nullglob
+        _keys=("$ASC_KEY_DIR"/AuthKey_*.p8)
+        shopt -u nullglob
+        if [[ ${#_keys[@]} -eq 1 ]]; then
+            _base="$(basename "${_keys[0]}" .p8)"
+            ASC_KEY_ID="${_base#AuthKey_}"
+        elif [[ ${#_keys[@]} -gt 1 ]]; then
+            die "multiple keys in $ASC_KEY_DIR — set ASC_KEY_ID to pick one"
+        fi
+    fi
+    # Issuer id from the environment, or a one-line file beside the keys.
+    if [[ -z "${ASC_ISSUER_ID:-}" && -f "$HOME/.appstoreconnect/issuer_id" ]]; then
+        ASC_ISSUER_ID="$(tr -d '[:space:]' < "$HOME/.appstoreconnect/issuer_id")"
+    fi
+
+    if [[ -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" ]]; then
+        AUTH_ARGS=(--apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID")
+        AUTH_KIND="API key $ASC_KEY_ID"
+    elif [[ -n "${ASC_APPLE_ID:-}" && -n "${ASC_APP_PASSWORD:-}" ]]; then
+        AUTH_ARGS=(-u "$ASC_APPLE_ID" -p "$ASC_APP_PASSWORD")
+        AUTH_KIND="app-specific password for $ASC_APPLE_ID"
+    else
+        die "no upload credentials. Use either:
+  API key  — put AuthKey_<KEYID>.p8 in $ASC_KEY_DIR, then set ASC_ISSUER_ID
+             (or write it to ~/.appstoreconnect/issuer_id)
+  password — export ASC_APPLE_ID and ASC_APP_PASSWORD"
+    fi
+    bold "→ auth: $AUTH_KIND"
 fi
 if [[ $DO_VALIDATE -eq 1 ]]; then
     bold "→ Validating with altool"
-    xcrun altool --validate-app -f "$PKG" -t macos \
-        -u "$ASC_APPLE_ID" -p "$ASC_APP_PASSWORD"
+    xcrun altool --validate-app -f "$PKG" -t macos "${AUTH_ARGS[@]}"
     ok "validation passed"
 fi
 if [[ $DO_UPLOAD -eq 1 ]]; then
     bold "→ Uploading with altool"
-    xcrun altool --upload-app -f "$PKG" -t macos \
-        -u "$ASC_APPLE_ID" -p "$ASC_APP_PASSWORD"
+    xcrun altool --upload-app -f "$PKG" -t macos "${AUTH_ARGS[@]}"
     ok "uploaded — check App Store Connect → TestFlight/Activity for processing"
 fi
 
@@ -129,9 +172,10 @@ bold "Done."
 echo "  Signed package: $PKG"
 if [[ $DO_UPLOAD -eq 0 ]]; then
     echo
-    echo "Next — validate then upload (set creds first):"
-    echo "    export ASC_APPLE_ID=\"lucasstuff@protonmail.com\""
-    echo "    export ASC_APP_PASSWORD=\"<app-specific-password>\""
+    echo "Next — validate then upload:"
+    echo "    # API key path (preferred): AuthKey_<KEYID>.p8 in ~/.appstoreconnect/private_keys/"
+    echo "    #                           plus ASC_ISSUER_ID or ~/.appstoreconnect/issuer_id"
+    echo "    # password path:            export ASC_APPLE_ID and ASC_APP_PASSWORD"
     echo "    ./scripts/package-appstore.sh --profile \"$PROFILE\" --validate"
     echo "    ./scripts/package-appstore.sh --profile \"$PROFILE\" --upload"
 fi
