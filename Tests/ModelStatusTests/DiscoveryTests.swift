@@ -23,12 +23,12 @@ final class DiscoveryTests: XCTestCase {
         XCTAssertFalse(Discovery.shouldFilterOut(host: "169.255.0.1", ownIPs: own))
         XCTAssertFalse(Discovery.shouldFilterOut(host: "168.254.0.1", ownIPs: own))
         // Common LAN ranges — explicitly allowed
-        XCTAssertFalse(Discovery.shouldFilterOut(host: "192.168.1.50", ownIPs: own))
+        XCTAssertFalse(Discovery.shouldFilterOut(host: "192.168.1.42", ownIPs: own))
         XCTAssertFalse(Discovery.shouldFilterOut(host: "10.0.0.5", ownIPs: own))
         XCTAssertFalse(Discovery.shouldFilterOut(host: "172.16.0.1", ownIPs: own))
         // Tailscale CGNAT range (100.64.0.0/10) — explicitly allowed (these are
         // useful Tailnet peers, just not the user's own machine)
-        XCTAssertFalse(Discovery.shouldFilterOut(host: "100.93.42.114", ownIPs: own))
+        XCTAssertFalse(Discovery.shouldFilterOut(host: "100.100.100.100", ownIPs: own))
     }
 
     func testFiltersIPv6LinkLocal() {

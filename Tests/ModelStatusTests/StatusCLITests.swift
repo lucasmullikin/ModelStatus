@@ -40,7 +40,7 @@ final class StatusCLITests: XCTestCase {
     func testRenderTextOneLinePerInstance() {
         let out = StatusCLI.renderText([
             makeStatus(name: "Local", state: .idle),
-            makeStatus(name: "M4 Pro", url: "http://192.168.1.50:11434", state: .unreachable)
+            makeStatus(name: "M4 Pro", url: "http://192.168.1.42:11434", state: .unreachable)
         ])
         let lines = out.split(separator: "\n")
         XCTAssertEqual(lines.count, 2)

@@ -29,7 +29,7 @@ final class FormattersTests: XCTestCase {
     }
 
     func testCompactLineActive() {
-        let inst = Instance(name: "M4 Pro", url: "http://192.168.1.50:11434")
+        let inst = Instance(name: "M4 Pro", url: "http://192.168.1.42:11434")
         let model = LoadedModel(name: "llama3.2:8b", vramBytes: 8_589_934_592, expiresAt: nil)
         let status = ServerStatus(instance: inst, detectedKind: .ollama, state: .active,
                                   loadedModels: [model], availableModelCount: 5, vramTotal: 8_589_934_592,

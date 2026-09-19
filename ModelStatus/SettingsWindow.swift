@@ -52,12 +52,12 @@ final class SettingsWindowController: NSWindowController {
 
         // v1.0: column widths sized to fit common content without manual
         // resizing. URL especially needs ~310pt to show real-world hostnames
-        // like "http://macmini-m4-pro.local:11434" without truncation. Each
+        // like "http://example.local:11434" without truncation. Each
         // column also gets minWidth/maxWidth so the user can still adjust
         // but defaults look clean on first open.
         for (id, title, width, minW, maxW, editable, tip) in [
             ("name", "Name", 130, 80,  220, true,  "Friendly label shown in the menu bar."),
-            ("url",  "URL",  310, 180, 480, true,  "http:// or https:// with port. Example: http://192.168.1.50:11434"),
+            ("url",  "URL",  310, 180, 480, true,  "http:// or https:// with port. Example: http://192.168.1.42:11434"),
             ("kind", "Kind", 110, 80,  160, false, "Provider type. 'Auto' detects from the URL on first poll."),
             ("auth", "Auth", 70,  50,  120, false, "🔒 Set = an Authorization header is stored in the Keychain.")
         ] as [(String, String, CGFloat, CGFloat, CGFloat, Bool, String)] {
@@ -416,7 +416,7 @@ final class SettingsWindowController: NSWindowController {
         // config so the user can see "Local Mac → already added" instead of
         // accidentally creating duplicate entries. URL-equality is the
         // reliable comparison; we can't tell that 127.0.0.1:8080 and
-        // 192.168.1.50:8080 are the same physical server without resolving,
+        // 192.168.1.42:8080 are the same physical server without resolving,
         // so we just match exact URL strings — which catches the
         // discover-twice case without false positives.
         let existingURLs = Set(ConfigManager.shared.instances.map { $0.url })
@@ -586,7 +586,7 @@ final class SettingsWindowController: NSWindowController {
         nameField.stringValue = preName ?? ""
 
         let urlField = NSTextField(frame: NSRect(x: 0, y: 64, width: 360, height: 24))
-        urlField.placeholderString = "URL (e.g., http://192.168.1.50:11434)"
+        urlField.placeholderString = "URL (e.g., http://192.168.1.42:11434)"
         urlField.stringValue = preURL ?? ""
 
         let kindPopup = NSPopUpButton(frame: NSRect(x: 0, y: 32, width: 360, height: 24))

@@ -206,8 +206,8 @@ private actor MDNSCache {
             guard let output = String(data: data, encoding: .utf8) else { return nil }
 
             // Parse output like:
-            // name: macmini-m4-pro.local
-            // ip_address: 192.168.1.50
+            // name: example.local
+            // ip_address: 192.168.1.42
             for line in output.components(separatedBy: "\n") {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.hasPrefix("ip_address:") {

@@ -17,8 +17,8 @@ final class URLValidatorTests: XCTestCase {
     }
 
     func testAutoPrependsHTTP() {
-        switch URLValidator.validate("192.168.1.50:11434") {
-        case .success(let s): XCTAssertEqual(s, "http://192.168.1.50:11434")
+        switch URLValidator.validate("192.168.1.42:11434") {
+        case .success(let s): XCTAssertEqual(s, "http://192.168.1.42:11434")
         case .failure: XCTFail("expected success — http should be auto-prepended")
         }
     }

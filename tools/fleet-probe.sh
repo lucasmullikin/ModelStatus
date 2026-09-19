@@ -4,7 +4,9 @@
 set -euo pipefail
 
 TIMEOUT=3
-M4_HOST="${M4_HOST:-macmini-m4-pro.local}"
+M4_HOST="${M4_HOST:-example.local}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODELSTATUS_BIN="${MODELSTATUS_BIN:-$REPO_ROOT/build/ModelStatus.app/Contents/MacOS/ModelStatus}"
 
 json_or_null() {
     local url="$1"
@@ -152,6 +154,6 @@ echo "  ],"
 
 # ModelStatus CLI view
 echo '  "modelstatus_view": '
-/Users/lucasmullikin/projects/OllamaStatus/build/ModelStatus.app/Contents/MacOS/ModelStatus status --json 2>/dev/null || echo '[]'
+"$MODELSTATUS_BIN" status --json 2>/dev/null || echo '[]'
 
 echo "}"
